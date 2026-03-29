@@ -1,0 +1,1157 @@
+openapi: 3.1.0
+info:
+  title: Videa 外部 API
+  version: 1.0.0
+  description: |
+    第三方 Web 应用使用 Videa 作为支付和分成引擎的外部 API。
+
+    ## 身份认证
+
+    两种认证模式：
+
+    1. **Bearer + API Key** - 用于用户级操作（支付、余额、收益、事件）。传递 `Authorization: Bearer <token>` 和 `X-API-Key: videa_...` 请求头。
+    2. **仅 API Key** - 用于平台级操作（收益方案）。仅传递 `X-API-Key: videa_...` 请求头。
+
+    Bearer Token 通过 SIWE（Sign-In with Ethereum）OAuth 授权码流程获取。
+
+    ## 核心概念
+
+    - **代币**：USDT 和 USDC（6 位精度）。Decimal 字段序列化为字符串。
+    - **链**：Polygon (137)、BSC (56)、Polygon Amoy (80002)、BSC Testnet (97)。
+    - **收益方案**：BALANCED (70/20/10)、CHANNEL_PRIORITY (60/30/10)、STRONG_CHANNEL (50/40/10)、CREATOR_PRIORITY (80/10/10) — 创作者/分销商/平台百分比。
+    - **幂等性**：支付路由（购买、订阅、打赏）需要 `Idempotency-Key` 请求头。
+    - **时间戳**：ISO 8601 格式。
+
+    ## 统一购买模型
+
+    所有支付（内容购买、订阅和打赏）均存储为 **Purchase** 记录，
+    通过 `category` 字段（`CONTENT`、`SUBSCRIPTION` 或 `TIP`）区分。`/subscribe` 和 `/tip`
+    路由作为便捷别名存在，但会创建对应类别的 Purchase 记录。
+    新集成建议使用 `POST /v1/external/purchase` 并指定所需的 `category`。
+
+    ## 弹窗流程
+
+    Videa 提供独立的弹窗页面处理支付操作，包括钱包连接
+    （SIWE）、链/代币选择、余额检查和内联充值——无需父应用
+    提供 Bearer Token。
+
+    支付弹窗（购买、订阅、打赏）需要**支付意图**。通过
+    `POST /v1/external/payment-intents` 在服务端创建，然后仅将 `intent_id` 传递给
+    弹窗 URL。意图在 30 分钟后过期且仅可使用一次。
+
+    | 弹窗 URL | 必填参数 | 成功事件 |
+    |-----------|----------------|---------------|
+    | `/purchase` | `client_id`, `redirect_uri`, `user_id`, `intent_id` | `videa:purchase:success` |
+    | `/subscribe` | `client_id`, `redirect_uri`, `user_id`, `intent_id` | `videa:subscribe:success` |
+    | `/tip` | `client_id`, `redirect_uri`, `user_id`, `intent_id` | `videa:tip:success` |
+
+    所有弹窗共享 `videa:popup:closed`（用户关闭）和 `videa:popup:error`（SIWE 失败）事件。
+    所有弹窗的可选参数：`wallet_address`、`state`。
+
+  contact:
+    name: Videa
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api
+    description: 相对 API 基础路径
+
+tags:
+  - name: 身份认证
+    description: 基于 SIWE 的令牌交换和刷新
+  - name: 收益方案
+    description: 可用的收益分成方案
+  - name: 支付意图
+    description: 服务端创建的支付意图，用于安全的弹窗流程
+  - name: 购买
+    description: 统一支付操作（内容购买、订阅和打赏）。所有支付类型均创建带有 `category` 字段的 Purchase 记录。
+  - name: 用户
+    description: 用户资料管理
+  - name: 余额
+    description: 用户余额查询
+  - name: 分销链接
+    description: 外部分销链接管理
+  - name: 收益
+    description: 创作者和分销商收益
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 通过 POST /api/auth/token/exchange 获取的 Bearer Token
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: 用于应用识别的 API 密钥
+
+  schemas:
+    RevenueSharePlan:
+      type: string
+      enum: [BALANCED, CHANNEL_PRIORITY, STRONG_CHANNEL, CREATOR_PRIORITY]
+
+    ActionStatus:
+      type: string
+      description: "结算状态。PERMANENTLY_FAILED 的操作会由对账系统自动退款（→ REFUNDED）。"
+      enum: [PENDING, EXECUTING, COMPLETED, FAILED, PERMANENTLY_FAILED, REFUNDED]
+
+    Token:
+      type: string
+      enum: [USDT, USDC]
+
+    ReconciliationHoldError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "支付暂时中止：余额验证进行中。请联系支持。"
+        code:
+          type: string
+          enum: [RECONCILIATION_HOLD]
+        reconciliationLogId:
+          type: string
+          nullable: true
+          description: 触发冻结的对账事件参考 ID
+
+    ChainId:
+      type: integer
+      enum: [137, 80002, 56, 97]
+      description: "137=Polygon, 80002=Amoy, 56=BSC, 97=BSC Testnet"
+
+    PurchaseCategory:
+      type: string
+      enum: [CONTENT, SUBSCRIPTION, TIP]
+      description: 购买记录的类别
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+    CreatePaymentIntentRequest:
+      type: object
+      required: [type, creatorUserId, revenuePlan, externalTransactionId]
+      discriminator:
+        propertyName: type
+      properties:
+        type:
+          type: string
+          enum: [purchase, subscribe, tip]
+          description: 映射到购买类别——purchase=CONTENT, subscribe=SUBSCRIPTION, tip=TIP
+        creatorUserId:
+          type: string
+        revenuePlan:
+          $ref: "#/components/schemas/RevenueSharePlan"
+        distributionLinkCode:
+          type: string
+        chainId:
+          $ref: "#/components/schemas/ChainId"
+        token:
+          $ref: "#/components/schemas/Token"
+        externalContentId:
+          type: string
+          description: type=purchase 时必填
+        price:
+          type: number
+          minimum: 0.01
+          maximum: 10000
+          description: type=purchase 时必填
+        amount:
+          type: number
+          minimum: 0.01
+          maximum: 10000
+          description: type=subscribe 和 type=tip 时必填
+        externalTransactionId:
+          type: string
+          description: 所有类型（purchase、subscribe、tip）均必填。你的外部交易标识符。
+
+    PaymentIntent:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [purchase, subscribe, tip]
+        status:
+          type: string
+          enum: [pending, completed, expired]
+        creatorUserId:
+          type: string
+        revenuePlan:
+          $ref: "#/components/schemas/RevenueSharePlan"
+        distributionLinkCode:
+          type: string
+          nullable: true
+        chainId:
+          type: integer
+          nullable: true
+        token:
+          type: string
+          nullable: true
+        externalContentId:
+          type: string
+          nullable: true
+        price:
+          type: number
+          nullable: true
+        amount:
+          type: number
+          nullable: true
+        externalTransactionId:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        creatorPercent:
+          type: number
+        distributorPercent:
+          type: number
+        platformPercent:
+          type: number
+
+    PurchaseQueryResult:
+      type: object
+      description: GET /purchase?externalContentId=... 返回的购买信息
+      properties:
+        id:
+          type: string
+        category:
+          $ref: "#/components/schemas/PurchaseCategory"
+        createdAt:
+          type: string
+          format: date-time
+        chainId:
+          type: integer
+        amount:
+          type: string
+        currency:
+          type: string
+        externalTransactionId:
+          type: string
+
+    PurchaseRecord:
+      type: object
+      description: GET /purchase/{id} 返回的完整购买记录
+      properties:
+        id:
+          type: string
+        category:
+          $ref: "#/components/schemas/PurchaseCategory"
+        externalContentId:
+          type: string
+        externalTransactionId:
+          type: string
+        creatorId:
+          type: string
+        amount:
+          type: string
+        currency:
+          type: string
+        chainId:
+          type: integer
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: category 为 SUBSCRIPTION 时存在
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: category 为 SUBSCRIPTION 时存在
+        isActive:
+          type: boolean
+          nullable: true
+          description: category 为 SUBSCRIPTION 时存在
+        autoRenew:
+          type: boolean
+          nullable: true
+          description: category 为 SUBSCRIPTION 时存在
+        createdAt:
+          type: string
+          format: date-time
+
+    ActionRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/ActionStatus"
+        executionTxHash:
+          type: string
+          nullable: true
+        explorerUrl:
+          type: string
+          nullable: true
+          description: 链上交易的区块浏览器 URL
+        executedAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+
+    ChainBalance:
+      type: object
+      properties:
+        chainId:
+          type: integer
+        token:
+          type: string
+        availableBalance:
+          type: string
+        pendingBalance:
+          type: string
+        totalDeposited:
+          type: string
+        totalSpent:
+          type: string
+        totalWithdrawn:
+          type: string
+
+    DistributionLinkCreated:
+      type: object
+      description: POST 创建时返回的分销链接
+      properties:
+        id:
+          type: string
+        linkCode:
+          type: string
+        linkType:
+          type: string
+        creatorId:
+          type: string
+        distributorId:
+          type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    DistributionLink:
+      type: object
+      description: GET 列表返回的分销链接
+      properties:
+        id:
+          type: string
+        linkCode:
+          type: string
+        linkType:
+          type: string
+        creatorId:
+          type: string
+        distributorId:
+          type: string
+        isActive:
+          type: boolean
+        clickCount:
+          type: integer
+        conversionCount:
+          type: integer
+        totalRevenue:
+          type: string
+        distributorEarnings:
+          type: string
+        authorizationRevokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Event:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        maxLength: 128
+        pattern: "^[\\w\\-:.]+$"
+      description: 防止重复操作的唯一键
+
+paths:
+  # --- 身份认证 ---
+  /auth/token/nonce:
+    get:
+      tags: [身份认证]
+      summary: 获取 SIWE nonce
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 用于 SIWE 消息的 nonce
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nonce:
+                    type: string
+
+  /auth/authorize:
+    post:
+      tags: [身份认证]
+      summary: 用 SIWE 签名换取授权码
+      description: |
+        接受已签名的 SIWE 消息，返回一个短期授权码。
+        该授权码通过 POST /api/auth/token/exchange 交换为 Bearer Token。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, signature, client_id, redirect_uri]
+              properties:
+                message:
+                  type: string
+                  description: JSON 序列化的 SIWE 消息
+                signature:
+                  type: string
+                  description: "钱包签名（0x...）"
+                client_id:
+                  type: string
+                  description: API 密钥记录 ID
+                redirect_uri:
+                  type: string
+                  description: 必须匹配该 API 密钥注册的回调 URI
+                response_type:
+                  type: string
+                  enum: [code, token]
+                  default: code
+                  description: |
+                    "code"（默认）返回短期授权码，用于标准 OAuth 流程。
+                    "token" 直接返回 Bearer Token——供 Videa 自身弹窗页面使用，
+                    Token 保留在 Videa 域名内，不会暴露给第三方应用。
+                state:
+                  type: string
+                  description: 不透明的 CSRF 值，在响应中原样回传
+                wallet_address:
+                  type: string
+                  description: 可选——如果提供，验证后的钱包地址必须匹配
+                user_id:
+                  type: string
+                  description: 可选的 Videa 用户 ID（来自令牌交换），用于识别用户
+                nickname:
+                  type: string
+                  maxLength: 100
+                  description: 可选——在授权时设置用户的显示名称
+      responses:
+        "200":
+          description: |
+            当 response_type=code（默认）时：返回授权码。
+            当 response_type=token 时：直接返回 Bearer Token。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - title: 授权码响应（response_type=code）
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      state:
+                        type: string
+                  - title: Bearer Token 响应（response_type=token）
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                      expiresAt:
+                        type: string
+                        format: date-time
+                      user:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          walletAddress:
+                            type: string
+                          nickname:
+                            type: string
+                          isCreator:
+                            type: boolean
+                          isDistributor:
+                            type: boolean
+                      state:
+                        type: string
+
+  /auth/token/exchange:
+    post:
+      tags: [身份认证]
+      summary: 用授权码交换 Bearer Token
+      description: |
+        服务端到服务端接口。第三方后端用短期授权码
+        （来自 POST /api/auth/authorize）交换 Bearer Token。
+        授权码为一次性使用，1 分钟后过期。
+
+        响应中包含 `user.id`——请保存并在后续 API 调用中用作 `creatorUserId` 或
+        `distributorUserId`（而非钱包地址）。
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, redirect_uri]
+              properties:
+                code:
+                  type: string
+                  description: 来自 /auth/authorize 的授权码
+                redirect_uri:
+                  type: string
+                  description: 必须与生成授权码时使用的 redirect_uri 一致
+      responses:
+        "200":
+          description: Bearer Token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      walletAddress:
+                        type: string
+                      nickname:
+                        type: string
+                      isCreator:
+                        type: boolean
+                      isDistributor:
+                        type: boolean
+
+  /auth/token/refresh:
+    post:
+      tags: [身份认证]
+      summary: 刷新 Bearer Token
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 新的 Bearer Token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+
+  # --- 收益方案 ---
+  /v1/external/revenue-plans:
+    get:
+      tags: [收益方案]
+      summary: 列出可用的收益分成方案
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 可用方案
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Plan"
+
+  # --- 支付意图 ---
+  /v1/external/payment-intents:
+    post:
+      tags: [支付意图]
+      summary: 创建支付意图
+      description: |
+        创建服务端支付意图。返回一个 intentId，可传递给弹窗 URL
+        代替敏感参数（价格、收益方案等）。
+        意图在 30 分钟后过期且仅可使用一次。
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentIntentRequest"
+      responses:
+        "201":
+          description: 支付意图已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intentId:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: 校验错误
+        "401":
+          description: API 密钥无效
+
+  /v1/external/payment-intents/{id}:
+    get:
+      tags: [支付意图]
+      summary: 获取支付意图详情
+      description: 返回意图参数。供弹窗加载意图数据使用。
+      security:
+        - BearerAuth: []
+          ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 支付意图详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntent"
+        "400":
+          description: 意图已过期或已完成
+        "404":
+          description: 意图不存在
+
+  # --- 购买（统一支付） ---
+  /v1/external/purchase:
+    post:
+      tags: [购买]
+      summary: 创建购买（内容、订阅或打赏）
+      description: |
+        创建 Purchase 记录。`category` 决定支付类型：
+        - `CONTENT` — 一次性内容购买（需要 `externalContentId` 和 `price`）
+        - `SUBSCRIPTION` — 创作者订阅（需要 `amount`）
+        - `TIP` — 创作者打赏（需要 `amount`）
+
+        `/subscribe` 和 `/tip` 路由作为便捷别名存在，分别创建
+        category 为 SUBSCRIPTION 和 TIP 的 Purchase 记录。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [externalContentId, price, creatorUserId, chainId, token, revenuePlan, externalTransactionId]
+              properties:
+                externalContentId:
+                  type: string
+                externalTransactionId:
+                  type: string
+                  description: 外部交易标识符
+                price:
+                  type: number
+                  minimum: 0.01
+                creatorUserId:
+                  type: string
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+                token:
+                  $ref: "#/components/schemas/Token"
+                distributionLinkCode:
+                  type: string
+                revenuePlan:
+                  $ref: "#/components/schemas/RevenueSharePlan"
+                  description: 本次交易的收益分成方案。
+                intentId:
+                  type: string
+                  description: 支付意图 ID。提供时，意图参数覆盖请求体参数。
+      responses:
+        "201":
+          description: 购买已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  purchaseId:
+                    type: string
+                  actionId:
+                    type: string
+                  category:
+                    $ref: "#/components/schemas/PurchaseCategory"
+                  externalTransactionId:
+                    type: string
+                  duplicate:
+                    type: boolean
+                    description: 当幂等重复提交匹配到已有购买时为 true
+        "409":
+          description: 因余额验证中支付暂时中止
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationHoldError"
+
+    get:
+      tags: [购买]
+      summary: 通过 externalContentId 查询购买状态
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: externalContentId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 购买状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasPurchased:
+                    type: boolean
+                  purchase:
+                    nullable: true
+                    $ref: "#/components/schemas/PurchaseQueryResult"
+
+  /v1/external/purchase/{id}:
+    get:
+      tags: [购买]
+      summary: 获取购买详情和结算状态
+      description: |
+        `{id}` 路径参数为 `externalTransactionId`。返回购买记录
+        （根据 `category` 可能是内容购买、订阅或打赏）
+        以及链上操作状态。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 购买的 externalTransactionId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 购买详情及操作状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purchase:
+                    $ref: "#/components/schemas/PurchaseRecord"
+                  action:
+                    $ref: "#/components/schemas/ActionRecord"
+
+  # --- 用户 ---
+  /v1/external/user/{userId}/profile:
+    get:
+      tags: [用户]
+      summary: 获取用户资料
+      description: 获取已认证用户的资料。路径中的 userId 必须与已认证用户一致。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 用户资料
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nickname:
+                    type: string
+                    nullable: true
+        "403":
+          description: 无法查看其他用户的资料
+        "404":
+          description: 用户不存在
+
+  /v1/external/user/{userId}/nickname:
+    put:
+      tags: [用户]
+      summary: 更新用户昵称
+      description: 更新已认证用户的昵称。路径中的 userId 必须与已认证用户一致。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nickname]
+              properties:
+                nickname:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: 新昵称（去除首尾空格，1-100 个字符）
+      responses:
+        "200":
+          description: 昵称已更新
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nickname:
+                    type: string
+        "400":
+          description: 昵称无效
+        "403":
+          description: 无法更新其他用户的昵称
+
+  # --- 余额 ---
+  /v1/external/balance:
+    get:
+      tags: [余额]
+      summary: 获取用户按链划分的余额
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 链上余额
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChainBalance"
+
+  # --- 分销链接 ---
+  /v1/external/distribution-links:
+    post:
+      tags: [分销链接]
+      summary: 创建分销链接
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [creatorUserId, distributorUserId]
+              properties:
+                creatorUserId:
+                  type: string
+                distributorUserId:
+                  type: string
+      responses:
+        "201":
+          description: 链接已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  link:
+                    $ref: "#/components/schemas/DistributionLinkCreated"
+
+    delete:
+      tags: [分销链接]
+      summary: 停用分销链接
+      description: 已认证用户必须是该链接的创作者或分销商。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                linkCode:
+                  type: string
+                  description: 32 位十六进制链接码
+                linkId:
+                  type: string
+                  description: 链接记录 ID
+      responses:
+        "200":
+          description: 链接已停用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  link:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      linkCode:
+                        type: string
+                      isActive:
+                        type: boolean
+                      alreadyDeactivated:
+                        type: boolean
+        "404":
+          description: 链接不存在
+
+    get:
+      tags: [分销链接]
+      summary: 列出分销链接
+      description: creatorUserId 和 distributorUserId 至少需要一个。使用令牌交换获取的用户 ID。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: creatorUserId
+          in: query
+          schema:
+            type: string
+          description: 按创作者用户 ID 筛选
+        - name: distributorUserId
+          in: query
+          schema:
+            type: string
+          description: 按分销商用户 ID 筛选
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: 分销链接列表（含分页）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/DistributionLink"
+                        - type: object
+                          properties:
+                            creatorNickname:
+                              type: string
+                              nullable: true
+                            distributorNickname:
+                              type: string
+                              nullable: true
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  # --- 收益 ---
+  /v1/external/creator/earnings:
+    get:
+      tags: [收益]
+      summary: 获取创作者收益汇总和交易明细
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: creatorUserId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: 创作者收益
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    properties:
+                      totalEarnings:
+                        type: number
+                      thisMonth:
+                        type: number
+                  breakdown:
+                    type: object
+                    properties:
+                      purchases:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                      subscriptions:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                      tips:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                  transactions:
+                    type: array
+                    items:
+                      type: object
+
+  /v1/external/distributor/earnings:
+    get:
+      tags: [收益]
+      summary: 获取分销商收益汇总和交易明细
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: distributorUserId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: 分销商收益
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    properties:
+                      totalEarnings:
+                        type: number
+                      thisMonth:
+                        type: number
+                  breakdown:
+                    type: object
+                    properties:
+                      purchases:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                      subscriptions:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                      tips:
+                        type: object
+                        properties:
+                          total: { type: number }
+                          thisMonth: { type: number }
+                          count: { type: integer }
+                  transactions:
+                    type: array
+                    items:
+                      type: object

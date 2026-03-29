@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Videa API Demo — 3-Role Integration</title>
+  <!--
+    ============================================================
+    VIDEA EXAMPLE APP — DEMO WALKTHROUGH
+    ============================================================
+
+    Prerequisites:
+      1. Run Videa dev server: cd <videa-root> && npm run dev (port 3200)
+      2. Start this app:
+         cd external-docs/example-app
+         npm install
+         VIDEA_URL=http://localhost:3200 VIDEA_API_KEY=videa_xxx VIDEA_API_KEY_ID=clxxx npm start
+      3. Have 3 wallet accounts (MetaMask or any EVM wallet)
+      4. Have testnet tokens (USDT/USDC on Amoy 80002 or BSC Testnet 97)
+
+    Steps:
+      1. Open http://localhost:4000 in your browser
+
+      -- Connect wallets --
+      2. Click "Connect" on Fan panel -> Videa authorize popup opens -> sign SIWE with wallet 1
+         - After connecting, fan balance is auto-refreshed
+      3. Click "Connect" on Creator panel -> connect wallet 2
+         - Creator user ID auto-fills into purchase/tip/subscribe/link forms
+      4. Click "Connect" on Distributor panel -> connect wallet 3
+         - Use "Reconnect" to re-verify with the same wallet (user_id is passed to popup)
+
+      -- Set nicknames (optional) --
+      5. On any panel, type a display name and click "Update"
+         - The panel header updates to show the nickname instead of user ID
+
+      -- Create distribution link --
+      6. Distributor panel: Enter Creator User ID, click "Create Link"
+         - Copy the link code from the status message
+         - Use "Refresh List" to see all links with conversion counts and earnings
+         - Click "Deactivate" on any active link to disable it
+
+      -- Deposit funds --
+      7. Fan panel: Click "Open Deposit Popup" to deposit testnet USDT/USDC on-chain
+         - Balance auto-refreshes ~3s after successful deposit
+
+      -- Purchase content --
+      8. Fan panel "Purchase Content" section:
+         - Fill in External Content ID, Creator User ID, and Price (required)
+         - Optionally set Content Name and Creator Name (display-only in popup)
+         - Pick a Revenue Plan (BALANCED/CHANNEL_PRIORITY/STRONG_CHANNEL/CREATOR_PRIORITY)
+         - Paste the distribution link code from step 6
+         - Optionally set an External Transaction ID (auto-generated if empty)
+         - Click "Open Purchase Popup" -> confirm in popup
+         - On success the External Transaction ID auto-fills the Query section
+
+      -- Send a tip --
+      9. Fan panel "Send Tip" section:
+         - Fill in Creator User ID (required), optionally set Creator Name
+         - Set a Suggested Amount (optional — user can change in popup)
+         - Pick Revenue Plan and paste distribution link code (optional)
+         - Optionally set an External Transaction ID
+         - Click "Open Tip Popup" -> confirm in popup
+
+      -- Subscribe to creator --
+      10. Fan panel "Subscribe to Creator" section:
+          - Fill in Creator User ID and Monthly Price (required)
+          - Pick Revenue Plan and paste distribution link code (optional)
+          - Optionally set an External Transaction ID
+          - Expand "Display Customisation" to set Price Label, Price Suffix,
+            Price Description, and Button Label (controls popup appearance)
+          - Click "Open Subscribe Popup" -> confirm in popup
+
+      -- Query transaction status --
+      11. Fan panel "Query Transaction Details" section:
+          - Enter an External Transaction ID (auto-filled after purchase/tip/subscribe)
+          - Click "Query" to see payment status, settlement info, and on-chain tx hash
+
+      -- Verify earnings --
+      12. Creator panel: Click "Refresh Earnings" to see total/monthly earnings and recent txs
+      13. Distributor panel: Click "Refresh Earnings" to see distribution commissions
+      14. Fan panel: Click "Refresh Balance" to verify balance decreased
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 700; }
+    h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; }
+    h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; color: #aaa; }
+
+    /* Config Bar */
+    .config-bar {
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .config-bar h1 { color: #fff; white-space: nowrap; }
+    .config-info {
+      font-size: 0.8rem;
+      color: #888;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .config-info .val { color: #4ade80; font-family: monospace; }
+    .config-info .warn { color: #fbbf24; }
+
+    /* Panels Grid */
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+      min-height: calc(100vh - 200px);
+    }
+    @media (max-width: 900px) {
+      .panels { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      border-right: 1px solid #1e1e1e;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .panel:last-child { border-right: none; }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #222;
+    }
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-title .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    /* Role colors */
+    .fan .dot, .fan .accent { background: #4ade80; }
+    .fan .btn-accent { background: #16a34a; }
+    .fan .btn-accent:hover { background: #15803d; }
+    .creator .dot, .creator .accent { background: #a78bfa; }
+    .creator .btn-accent { background: #7c3aed; }
+    .creator .btn-accent:hover { background: #6d28d9; }
+    .distributor .dot, .distributor .accent { background: #60a5fa; }
+    .distributor .btn-accent { background: #2563eb; }
+    .distributor .btn-accent:hover { background: #1d4ed8; }
+
+    /* Buttons */
+    .btn {
+      padding: 7px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      color: #fff;
+    }
+    .btn-sm { padding: 4px 10px; font-size: 0.78rem; }
+    .btn-default { background: #333; }
+    .btn-default:hover { background: #444; }
+    .btn-danger { background: #dc2626; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Forms */
+    .form-group { margin-bottom: 10px; }
+    .form-group label {
+      display: block;
+      font-size: 0.78rem;
+      color: #888;
+      margin-bottom: 3px;
+    }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      color: #e0e0e0;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-family: inherit;
+    }
+    .form-group select { cursor: pointer; }
+    .form-group textarea { resize: vertical; min-height: 50px; }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    /* Sections */
+    .section {
+      background: #161616;
+      border: 1px solid #222;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    /* Status / Response */
+    .status {
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-family: 'Consolas', 'Monaco', monospace;
+      margin-top: 8px;
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .status-success { background: #052e16; border: 1px solid #166534; color: #86efac; }
+    .status-error { background: #2a0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .status-info { background: #0a1a2a; border: 1px solid #1e3a5f; color: #93c5fd; }
+
+    /* Connected badge */
+    .badge {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .badge-connected { background: #052e16; color: #4ade80; }
+    .badge-disconnected { background: #1a1a1a; color: #666; }
+
+    /* Balance / Earnings display */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 0.82rem;
+      border-bottom: 1px solid #1e1e1e;
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-label { color: #888; }
+    .stat-value { color: #fff; font-weight: 600; font-family: monospace; }
+
+    /* Table */
+    .data-table {
+      width: 100%;
+      font-size: 0.78rem;
+      border-collapse: collapse;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 6px 8px;
+      color: #888;
+      border-bottom: 1px solid #2a2a2a;
+      font-weight: 600;
+    }
+    .data-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #1a1a1a;
+      font-family: monospace;
+    }
+
+    /* User identity display */
+    .user-identity {
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #aaa;
+    }
+
+    /* Copy button */
+    .copy-btn {
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      font-size: 0.78rem;
+      padding: 2px 4px;
+    }
+    .copy-btn:hover { color: #fff; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+  <!-- Config Bar -->
+  <div class="config-bar">
+    <h1>Videa API Demo</h1>
+    <div class="config-info">
+      <span>Videa: <span class="val" id="configVideaUrl">loading...</span></span>
+      <span>API Key: <span id="configApiKey">loading...</span></span>
+    </div>
+  </div>
+
+  <!-- 3 Role Panels -->
+  <div class="panels">
+
+    <!-- FAN PANEL -->
+    <div class="panel fan" id="fanPanel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="dot"></span> Fan</div>
+        <span class="badge badge-disconnected" id="fanBadge">Disconnected</span>
+      </div>
+      <div id="fanWalletInfo" style="display:none; margin-bottom:12px;">
+        <div class="user-identity" id="fanAddress"></div>
+      </div>
+
+      <button class="btn btn-accent" id="fanConnectBtn" onclick="connectWallet('fan')">Connect Wallet</button>
+
+      <div id="fanSections" style="display:none;">
+
+        <!-- Nickname -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Nickname</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="fanNicknameInput" placeholder="Enter nickname" class="input" style="flex:1;">
+            <button class="btn btn-default btn-sm" onclick="updateNickname('fan')">Update</button>
+          </div>
+          <div id="fanNicknameStatus"></div>
+        </div>
+
+        <!-- Balance -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Balance</h3>
+          <div id="fanBalanceDisplay"><span style="color:#666">Click Refresh to load</span></div>
+          <button class="btn btn-default btn-sm" style="margin-top:8px" onclick="refreshFanBalance()">Refresh Balance</button>
+        </div>
+
+        <!-- Deposit -->
+        <div class="section">
+          <h3>Deposit Funds</h3>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa deposit popup for on-chain deposit.</p>
+          <button class="btn btn-accent" onclick="openDeposit()">Open Deposit Popup</button>
+          <div id="depositStatus"></div>
+        </div>
+
+        <!-- Purchase (Popup) -->
+        <div class="section">
+          <h3>Purchase Content</h3>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa purchase popup. Chain, token, and balance are handled inside the popup.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>External Content ID</label>
+              <input type="text" id="popupPurchaseContentId" placeholder="e.g. product-123">
+            </div>
+            <div class="form-group">
+              <label>Content Name (optional)</label>
+              <input type="text" id="popupPurchaseContentName" placeholder="e.g. Premium Video">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Creator User ID</label>
+              <input type="text" id="popupPurchaseCreatorId" placeholder="user-id">
+            </div>
+            <div class="form-group">
+              <label>Creator Name (optional)</label>
+              <input type="text" id="popupPurchaseCreatorName" placeholder="e.g. Alice">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Price</label>
+            <input type="number" id="popupPurchasePrice" step="0.01" placeholder="19.99">
+          </div>
+          <div class="form-group">
+            <label>Revenue Plan (optional)</label>
+            <select id="popupPurchasePlan">
+              <option value="BALANCED">BALANCED (70/20/10)</option>
+              <option value="CHANNEL_PRIORITY">CHANNEL_PRIORITY (60/30/10)</option>
+              <option value="STRONG_CHANNEL">STRONG_CHANNEL (50/40/10)</option>
+              <option value="CREATOR_PRIORITY">CREATOR_PRIORITY (80/10/10)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Distribution Link Code (optional)</label>
+            <input type="text" id="popupPurchaseRefCode" placeholder="Paste distribution link code">
+          </div>
+          <div class="form-group">
+            <label>External Transaction ID (optional)</label>
+            <input type="text" id="popupPurchaseExtTxId" placeholder="auto-generated if empty">
+          </div>
+          <button class="btn btn-accent" onclick="openPurchasePopup()">Open Purchase Popup</button>
+          <div id="purchaseStatus"></div>
+        </div>
+
+        <!-- Tip (Popup) -->
+        <div class="section">
+          <h3>Send Tip</h3>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa tip popup. User selects amount inside the popup.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Creator User ID</label>
+              <input type="text" id="popupTipCreatorId" placeholder="user-id">
+            </div>
+            <div class="form-group">
+              <label>Creator Name (optional)</label>
+              <input type="text" id="popupTipCreatorName" placeholder="e.g. Alice">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Suggested Amount (optional)</label>
+            <input type="number" id="popupTipAmount" step="0.01" placeholder="10.00">
+          </div>
+          <div class="form-group">
+            <label>Revenue Plan (optional)</label>
+            <select id="popupTipPlan">
+              <option value="BALANCED">BALANCED (70/20/10)</option>
+              <option value="CHANNEL_PRIORITY">CHANNEL_PRIORITY (60/30/10)</option>
+              <option value="STRONG_CHANNEL">STRONG_CHANNEL (50/40/10)</option>
+              <option value="CREATOR_PRIORITY">CREATOR_PRIORITY (80/10/10)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Distribution Link Code (optional)</label>
+            <input type="text" id="popupTipRefCode" placeholder="Paste distribution link code">
+          </div>
+          <div class="form-group">
+            <label>External Transaction ID (optional)</label>
+            <input type="text" id="popupTipExtTxId" placeholder="auto-generated if empty">
+          </div>
+          <button class="btn btn-accent" onclick="openTipPopup()">Open Tip Popup</button>
+          <div id="tipStatus"></div>
+        </div>
+
+        <!-- Subscribe (Popup) -->
+        <div class="section">
+          <h3>Subscribe to Creator</h3>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa subscribe popup. Chain and token are handled inside the popup.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Creator User ID</label>
+              <input type="text" id="popupSubCreatorId" placeholder="user-id">
+            </div>
+            <div class="form-group">
+              <label>Monthly Price</label>
+              <input type="number" id="popupSubAmount" step="0.01" placeholder="9.99">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Revenue Plan (optional)</label>
+            <select id="popupSubPlan">
+              <option value="BALANCED">BALANCED (70/20/10)</option>
+              <option value="CHANNEL_PRIORITY">CHANNEL_PRIORITY (60/30/10)</option>
+              <option value="STRONG_CHANNEL">STRONG_CHANNEL (50/40/10)</option>
+              <option value="CREATOR_PRIORITY">CREATOR_PRIORITY (80/10/10)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Distribution Link Code (optional)</label>
+            <input type="text" id="popupSubRefCode" placeholder="Paste distribution link code">
+          </div>
+          <div class="form-group">
+            <label>External Transaction ID (optional)</label>
+            <input type="text" id="popupSubExtTxId" placeholder="auto-generated if empty">
+          </div>
+          <details style="margin-bottom:8px;">
+            <summary style="cursor:pointer; font-size:0.78rem; color:#888;">Display Customisation (optional)</summary>
+            <div style="margin-top:8px;">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Price Label</label>
+                  <input type="text" id="popupSubPriceLabel" placeholder="Monthly Price">
+                </div>
+                <div class="form-group">
+                  <label>Price Suffix</label>
+                  <input type="text" id="popupSubPriceSuffix" placeholder="/mo">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Price Description</label>
+                <input type="text" id="popupSubPriceDesc" placeholder="30-day subscription period with auto-renewal">
+              </div>
+              <div class="form-group">
+                <label>Button Label</label>
+                <input type="text" id="popupSubButtonLabel" placeholder="Subscribe $X.XX/mo">
+              </div>
+            </div>
+          </details>
+          <button class="btn btn-accent" onclick="openSubscribePopup()">Open Subscribe Popup</button>
+          <div id="subscribeStatus"></div>
+        </div>
+
+        <!-- Query Transaction Details -->
+        <div class="section">
+          <h3>Query Transaction Details</h3>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Look up any transaction (purchase, tip, or subscription) by external transaction ID.</p>
+          <div class="form-group">
+            <label>External Transaction ID</label>
+            <input type="text" id="queryTxId" placeholder="e.g. your-tx-123">
+          </div>
+          <button class="btn btn-default" onclick="queryByExternalTxId()">Query</button>
+          <div id="queryTxStatus"></div>
+        </div>
+
+
+      </div>
+    </div>
+
+    <!-- CREATOR PANEL -->
+    <div class="panel creator" id="creatorPanel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="dot"></span> Creator</div>
+        <span class="badge badge-disconnected" id="creatorBadge">Disconnected</span>
+      </div>
+      <div id="creatorWalletInfo" style="display:none; margin-bottom:12px;">
+        <div class="user-identity" id="creatorAddress"></div>
+      </div>
+
+      <button class="btn btn-accent" id="creatorConnectBtn" onclick="connectWallet('creator')">Connect Wallet</button>
+
+      <div id="creatorSections" style="display:none;">
+
+        <!-- Nickname -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Nickname</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="creatorNicknameInput" placeholder="Enter nickname" class="input" style="flex:1;">
+            <button class="btn btn-default btn-sm" onclick="updateNickname('creator')">Update</button>
+          </div>
+          <div id="creatorNicknameStatus"></div>
+        </div>
+
+        <!-- Earnings -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Earnings</h3>
+          <div id="creatorEarningsDisplay"><span style="color:#666">Click Refresh to load</span></div>
+          <button class="btn btn-default btn-sm" style="margin-top:8px" onclick="refreshCreatorEarnings()">Refresh Earnings</button>
+          <div id="creatorEarningsStatus"></div>
+        </div>
+
+
+      </div>
+    </div>
+
+    <!-- DISTRIBUTOR PANEL -->
+    <div class="panel distributor" id="distributorPanel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="dot"></span> Distributor</div>
+        <span class="badge badge-disconnected" id="distributorBadge">Disconnected</span>
+      </div>
+      <div id="distributorWalletInfo" style="display:none; margin-bottom:12px;">
+        <div class="user-identity" id="distributorAddress"></div>
+      </div>
+
+      <button class="btn btn-accent" id="distributorConnectBtn" onclick="connectWallet('distributor')">Connect Wallet</button>
+
+      <div id="distributorSections" style="display:none;">
+
+        <!-- Nickname -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Nickname</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="distributorNicknameInput" placeholder="Enter nickname" class="input" style="flex:1;">
+            <button class="btn btn-default btn-sm" onclick="updateNickname('distributor')">Update</button>
+          </div>
+          <div id="distributorNicknameStatus"></div>
+        </div>
+
+        <!-- Earnings -->
+        <div class="section" style="margin-top:12px;">
+          <h3>Earnings</h3>
+          <div id="distributorEarningsDisplay"><span style="color:#666">Click Refresh to load</span></div>
+          <button class="btn btn-default btn-sm" style="margin-top:8px" onclick="refreshDistributorEarnings()">Refresh Earnings</button>
+          <div id="distributorEarningsStatus"></div>
+        </div>
+
+        <!-- Distribution Links -->
+        <div class="section">
+          <h3>Distribution Links</h3>
+          <div class="form-group">
+            <label>Creator User ID</label>
+            <input type="text" id="linkCreatorId" placeholder="user-id">
+          </div>
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <button class="btn btn-accent btn-sm" onclick="createDistributionLink()">Create Link</button>
+            <button class="btn btn-default btn-sm" onclick="listDistributionLinks()">Refresh List</button>
+          </div>
+          <div id="linkStatus"></div>
+          <div id="linkList" style="margin-top:8px;"></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ============================================================
+    // STATE
+    // ============================================================
+
+    function txLink(tx) {
+      if (!tx.explorerUrl) return tx.transactionHash ? escapeHtml(tx.transactionHash.slice(0, 10) + '...') : '';
+      return '<a href="' + escapeHtml(tx.explorerUrl) + '" target="_blank" rel="noopener" style="color:#60a5fa;">' + escapeHtml(tx.transactionHash.slice(0, 10)) + '...</a>';
+    }
+
+    const state = {
+      fan: { token: null, expiresAt: null, user: null },
+      creator: { token: null, expiresAt: null, user: null },
+      distributor: { token: null, expiresAt: null, user: null },
+      config: { videaUrl: '', hasApiKey: false, apiKey: '', apiKeyId: '' }
+    };
+
+    // ============================================================
+    // LOAD CONFIG FROM SERVER
+    // ============================================================
+
+    async function loadConfig() {
+      try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        state.config = data;
+
+        document.getElementById('configVideaUrl').textContent = data.videaUrl;
+        const keyEl = document.getElementById('configApiKey');
+        if (data.hasApiKey) {
+          keyEl.textContent = 'configured';
+          keyEl.className = 'val';
+        } else {
+          keyEl.textContent = 'NOT SET — set VIDEA_API_KEY env var';
+          keyEl.className = 'warn';
+        }
+      } catch (e) {
+        document.getElementById('configVideaUrl').textContent = 'error loading config';
+      }
+    }
+
+    loadConfig();
+
+    // ============================================================
+    // API CALL (via server proxy)
+    // ============================================================
+
+    async function apiCall(endpoint, { method = 'GET', body = null, bearerToken = null, idempotencyKey = null } = {}) {
+      const resp = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method, endpoint, body, bearerToken, idempotencyKey })
+      });
+
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        throw new Error(data.error || 'HTTP ' + resp.status);
+      }
+      return data;
+    }
+
+    // ============================================================
+    // CONNECT WALLET (Popup Flow)
+    // ============================================================
+
+    function connectWallet(role) {
+      if (!state.config.hasApiKey) {
+        alert('API Key not configured. Set VIDEA_API_KEY env var and restart the server.');
+        return;
+      }
+      if (!state.config.apiKeyId) {
+        alert('API Key ID not configured. Set VIDEA_API_KEY_ID env var and restart the server.');
+        return;
+      }
+
+      const videaUrl = state.config.videaUrl;
+      const redirectUri = window.location.origin;
+      const existingUser = state[role]?.user;
+      let popupUrl = videaUrl + '/authorize?client_id=' + encodeURIComponent(state.config.apiKeyId)
+        + '&redirect_uri=' + encodeURIComponent(redirectUri) + '&mode=popup';
+      // Pass user_id on reconnect so the popup verifies the wallet matches the user
+      if (existingUser?.id) {
+        popupUrl += '&user_id=' + encodeURIComponent(existingUser.id);
+      }
+
+      const popup = window.open(popupUrl, 'videa_connect_' + role, 'width=450,height=650,left=200,top=100');
+
+      function onMessage(event) {
+        const expectedOrigin = new URL(videaUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+
+        if (event.data && event.data.type === 'videa:authorize:success') {
+          window.removeEventListener('message', onMessage);
+          const { code } = event.data;
+
+          // Exchange authorization code for bearer token via server proxy
+          fetch('/api/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              method: 'POST',
+              endpoint: '/api/auth/token/exchange',
+              body: { code, redirect_uri: redirectUri },
+            }),
+          })
+            .then(r => r.json())
+            .then(data => {
+              if (data.token) {
+                state[role] = { token: data.token, expiresAt: data.expiresAt, user: data.user };
+                onWalletConnected(role);
+              } else {
+                console.error('Token exchange failed:', data.error || 'Unknown error');
+              }
+            })
+            .catch(err => console.error('Token exchange error:', err));
+        } else if (event.data && event.data.type === 'videa:authorize:error') {
+          // Don't remove listener — user may retry in the popup
+          console.warn('Auth error:', event.data.error || 'Unknown error');
+        } else if (event.data && event.data.type === 'videa:authorize:closed') {
+          window.removeEventListener('message', onMessage);
+        }
+      }
+
+      window.addEventListener('message', onMessage);
+    }
+
+    function onWalletConnected(role) {
+      const { user } = state[role];
+      const displayName = user.nickname || user.id;
+
+      document.getElementById(role + 'Badge').textContent = 'Connected';
+      document.getElementById(role + 'Badge').className = 'badge badge-connected';
+      document.getElementById(role + 'Address').textContent = displayName;
+      document.getElementById(role + 'WalletInfo').style.display = 'block';
+      document.getElementById(role + 'ConnectBtn').textContent = 'Reconnect';
+      document.getElementById(role + 'Sections').style.display = 'block';
+
+      // Pre-fill nickname input with current value
+      var nicknameInput = document.getElementById(role + 'NicknameInput');
+      if (nicknameInput) nicknameInput.value = user.nickname || '';
+
+      // Fetch latest profile (nickname may have changed since token was issued)
+      fetchProfile(role);
+
+      if (role === 'creator') {
+        autoFillCreatorId(user.id);
+      }
+      if (role === 'distributor') {
+        autoFillDistributorId(user.id);
+      }
+      if (role === 'fan') {
+        refreshFanBalance();
+      }
+    }
+
+    // ============================================================
+    // FETCH PROFILE
+    // ============================================================
+
+    function fetchProfile(role) {
+      var roleState = state[role];
+      if (!roleState || !roleState.token) return;
+
+      apiCall('/api/v1/external/user/' + roleState.user.id + '/profile', {
+        bearerToken: roleState.token
+      })
+        .then(function(data) {
+          roleState.user.nickname = data.nickname;
+          var displayName = data.nickname || roleState.user.id;
+          document.getElementById(role + 'Address').textContent = displayName;
+          var nicknameInput = document.getElementById(role + 'NicknameInput');
+          if (nicknameInput) nicknameInput.value = data.nickname || '';
+        })
+        .catch(function(err) {
+          console.warn('Failed to fetch profile for ' + role + ':', err.message);
+        });
+    }
+
+    // ============================================================
+    // UPDATE NICKNAME
+    // ============================================================
+
+    function updateNickname(role) {
+      var roleState = state[role];
+      if (!roleState || !roleState.token) {
+        alert('Please connect wallet first.');
+        return;
+      }
+
+      var nickname = document.getElementById(role + 'NicknameInput').value.trim();
+      if (!nickname) {
+        alert('Please enter a nickname.');
+        return;
+      }
+
+      showStatus(role + 'NicknameStatus', 'info', 'Updating nickname...');
+
+      apiCall('/api/v1/external/user/' + roleState.user.id + '/nickname', {
+        method: 'PUT', body: { nickname: nickname }, bearerToken: roleState.token
+      })
+        .then(function(data) {
+          roleState.user.nickname = data.nickname;
+          document.getElementById(role + 'Address').textContent = data.nickname;
+          showStatus(role + 'NicknameStatus', 'success', 'Nickname updated to "' + data.nickname + '"');
+        })
+        .catch(function(err) {
+          showStatus(role + 'NicknameStatus', 'error', 'Failed: ' + err.message);
+        });
+    }
+
+    function autoFillCreatorId(userId) {
+      document.getElementById('popupPurchaseCreatorId').value = userId;
+      document.getElementById('popupTipCreatorId').value = userId;
+      document.getElementById('popupSubCreatorId').value = userId;
+      document.getElementById('linkCreatorId').value = userId;
+    }
+
+    function autoFillDistributorId(userId) {
+      document.getElementById('authDistributorId').value = userId;
+    }
+
+    // ============================================================
+    // DEPOSIT (Popup Flow)
+    // ============================================================
+
+    function openDeposit() {
+      if (!state.config.hasApiKey) {
+        alert('API Key not configured.');
+        return;
+      }
+      if (!state.fan.token) {
+        alert('Please connect Fan wallet first.');
+        return;
+      }
+
+      const videaUrl = state.config.videaUrl;
+      const origin = window.location.origin;
+      const popupUrl = videaUrl + '/deposit?client_id=' + encodeURIComponent(state.config.apiKeyId)
+        + '&redirect_uri=' + encodeURIComponent(origin)
+        + '&user_id=' + encodeURIComponent(state.fan.user.id);
+
+      const popup = window.open(popupUrl, 'videa_deposit', 'width=450,height=700,left=200,top=100');
+
+      function onMessage(event) {
+        const expectedOrigin = new URL(videaUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+
+        if (event.data && event.data.type === 'videa:deposit:success') {
+          window.removeEventListener('message', onMessage);
+          showStatus('depositStatus', 'success',
+            'Deposit successful!\n' +
+            'Tx: ' + event.data.transactionHash + '\n' +
+            'Chain: ' + event.data.chainId + '\n' +
+            'Amount: ' + event.data.amount + ' ' + event.data.token
+          );
+          setTimeout(refreshFanBalance, 3000);
+        } else if (event.data && event.data.type === 'videa:deposit:error') {
+          window.removeEventListener('message', onMessage);
+          showStatus('depositStatus', 'error', 'Deposit error: ' + (event.data.error || 'Unknown'));
+        } else if (event.data && event.data.type === 'videa:deposit:closed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('depositStatus', 'info', 'Deposit popup closed.');
+        }
+      }
+
+      window.addEventListener('message', onMessage);
+    }
+
+    // ============================================================
+    // FAN: Balance
+    // ============================================================
+
+    async function refreshFanBalance() {
+      if (!state.fan.token) return;
+      try {
+        const data = await apiCall('/api/v1/external/balance', { bearerToken: state.fan.token });
+        const balances = data.balances || [];
+        if (balances.length === 0) {
+          document.getElementById('fanBalanceDisplay').innerHTML = '<span style="color:#666">No balances found</span>';
+          return;
+        }
+        let html = '';
+        for (const b of balances) {
+          html += '<div class="stat-row">' +
+            '<span class="stat-label">Chain ' + b.chainId + ' ' + b.token + '</span>' +
+            '<span class="stat-value">' + parseFloat(b.availableBalance).toFixed(2) + '</span>' +
+            '</div>';
+          if (parseFloat(b.pendingBalance) > 0) {
+            html += '<div class="stat-row">' +
+              '<span class="stat-label" style="padding-left:12px;">Pending</span>' +
+              '<span class="stat-value" style="color:#fbbf24">' + parseFloat(b.pendingBalance).toFixed(2) + '</span>' +
+              '</div>';
+          }
+        }
+        document.getElementById('fanBalanceDisplay').innerHTML = html;
+      } catch (e) {
+        document.getElementById('fanBalanceDisplay').innerHTML = '<span style="color:#f87171">' + escapeHtml(e.message) + '</span>';
+      }
+    }
+
+    // ============================================================
+    // FAN: Purchase (Popup Flow)
+    // ============================================================
+
+    async function openPurchasePopup() {
+      if (!state.config.hasApiKey) {
+        alert('API Key not configured.');
+        return;
+      }
+      const fanUserId = state.fan.user && state.fan.user.id;
+      if (!fanUserId) {
+        showStatus('purchaseStatus', 'error', 'Connect Fan wallet first (user_id is required).');
+        return;
+      }
+      const contentId = document.getElementById('popupPurchaseContentId').value.trim();
+      const price = document.getElementById('popupPurchasePrice').value.trim();
+      const creatorId = document.getElementById('popupPurchaseCreatorId').value.trim();
+      const revenuePlan = document.getElementById('popupPurchasePlan').value;
+      const refCode = document.getElementById('popupPurchaseRefCode').value.trim();
+
+      if (!contentId || !price || !creatorId) {
+        showStatus('purchaseStatus', 'error', 'Fill in content ID, price, and creator user ID.');
+        return;
+      }
+
+      // Step 1: Create payment intent server-side (params never touch the browser URL)
+      showStatus('purchaseStatus', 'info', 'Creating payment intent...');
+      const customExtTxId = document.getElementById('popupPurchaseExtTxId').value.trim();
+      const purchaseExternalTxId = customExtTxId || crypto.randomUUID();
+      let intentId;
+      try {
+        const res = await fetch('/api/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'purchase',
+            creatorUserId: creatorId,
+            externalContentId: contentId,
+            amount: parseFloat(price),
+            revenuePlan: revenuePlan,
+            externalTransactionId: purchaseExternalTxId,
+            ...(refCode ? { distributionLinkCode: refCode } : {}),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showStatus('purchaseStatus', 'error', 'Intent failed: ' + (data.error || 'Unknown'));
+          return;
+        }
+        intentId = data.intentId;
+      } catch (err) {
+        showStatus('purchaseStatus', 'error', 'Intent failed: ' + err.message);
+        return;
+      }
+
+      // Step 2: Open popup with intent_id and optional content_name
+      const videaUrl = state.config.videaUrl;
+      let popupUrl = videaUrl + '/purchase'
+        + '?client_id=' + encodeURIComponent(state.config.apiKeyId)
+        + '&redirect_uri=' + encodeURIComponent(window.location.origin)
+        + '&user_id=' + encodeURIComponent(fanUserId)
+        + '&intent_id=' + encodeURIComponent(intentId);
+
+      const contentName = document.getElementById('popupPurchaseContentName').value.trim();
+      if (contentName) popupUrl += '&content_name=' + encodeURIComponent(contentName);
+      const purchaseCreatorName = document.getElementById('popupPurchaseCreatorName').value.trim();
+      if (purchaseCreatorName) popupUrl += '&creator_name=' + encodeURIComponent(purchaseCreatorName);
+
+      const popup = window.open(popupUrl, 'videa_purchase', 'width=450,height=700,left=200,top=100');
+
+      function onMessage(event) {
+        const expectedOrigin = new URL(videaUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+
+        if (event.data && event.data.type === 'videa:purchase:success') {
+          window.removeEventListener('message', onMessage);
+          const extTxId = event.data.externalTransactionId || purchaseExternalTxId;
+          if (event.data.duplicate) {
+            showStatus('purchaseStatus', 'info',
+              'Already purchased!\nYou already own this content.\nPurchase ID: ' + event.data.purchaseId +
+              '\nContent: ' + event.data.contentId +
+              '\nExternal Transaction ID: ' + extTxId
+            );
+          } else {
+            showStatus('purchaseStatus', 'success',
+              'Purchase successful!\nPurchase ID: ' + event.data.purchaseId +
+              '\nContent: ' + event.data.contentId +
+              '\nExternal Transaction ID: ' + extTxId
+            );
+          }
+          document.getElementById('queryTxId').value = extTxId;
+          setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:purchase:error') {
+          window.removeEventListener('message', onMessage);
+          showStatus('purchaseStatus', 'error', 'Purchase failed: ' + (event.data.error || 'Unknown'));
+        } else if (event.data && event.data.type === 'videa:popup:closed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('purchaseStatus', 'info', 'Purchase popup closed.');
+        }
+      }
+
+      window.addEventListener('message', onMessage);
+    }
+
+    // ============================================================
+    // FAN: Tip (Popup Flow)
+    // ============================================================
+
+    async function openTipPopup() {
+      if (!state.config.hasApiKey) {
+        alert('API Key not configured.');
+        return;
+      }
+      const fanUserId = state.fan.user && state.fan.user.id;
+      if (!fanUserId) {
+        showStatus('tipStatus', 'error', 'Connect Fan wallet first (user_id is required).');
+        return;
+      }
+      const creatorId = document.getElementById('popupTipCreatorId').value.trim();
+      const amount = document.getElementById('popupTipAmount').value.trim();
+      const revenuePlan = document.getElementById('popupTipPlan').value;
+      const refCode = document.getElementById('popupTipRefCode').value.trim();
+
+      if (!creatorId) {
+        showStatus('tipStatus', 'error', 'Enter creator user ID.');
+        return;
+      }
+
+      // Step 1: Create payment intent server-side
+      showStatus('tipStatus', 'info', 'Creating payment intent...');
+      const customTipExtTxId = document.getElementById('popupTipExtTxId').value.trim();
+      const tipExternalTxId = customTipExtTxId || crypto.randomUUID();
+      let intentId;
+      try {
+        const intentBody = {
+          type: 'tip',
+          creatorUserId: creatorId,
+          amount: amount ? parseFloat(amount) : 1, // default tip amount for intent
+          revenuePlan: revenuePlan,
+          externalTransactionId: tipExternalTxId,
+          ...(refCode ? { distributionLinkCode: refCode } : {}),
+        };
+        const res = await fetch('/api/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(intentBody),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showStatus('tipStatus', 'error', 'Intent failed: ' + (data.error || 'Unknown'));
+          return;
+        }
+        intentId = data.intentId;
+      } catch (err) {
+        showStatus('tipStatus', 'error', 'Intent failed: ' + err.message);
+        return;
+      }
+
+      // Step 2: Open popup with intent_id and optional creator_name
+      const videaUrl = state.config.videaUrl;
+      let popupUrl = videaUrl + '/tip'
+        + '?client_id=' + encodeURIComponent(state.config.apiKeyId)
+        + '&redirect_uri=' + encodeURIComponent(window.location.origin)
+        + '&user_id=' + encodeURIComponent(fanUserId)
+        + '&intent_id=' + encodeURIComponent(intentId);
+
+      const tipCreatorName = document.getElementById('popupTipCreatorName').value.trim();
+      if (tipCreatorName) popupUrl += '&creator_name=' + encodeURIComponent(tipCreatorName);
+
+      const popup = window.open(popupUrl, 'videa_tip', 'width=450,height=700,left=200,top=100');
+
+      function onMessage(event) {
+        const expectedOrigin = new URL(videaUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+
+        if (event.data && event.data.type === 'videa:tip:success') {
+          window.removeEventListener('message', onMessage);
+          const extTxId = event.data.externalTransactionId || tipExternalTxId;
+          showStatus('tipStatus', 'success',
+            'Tip successful!\nPurchase ID: ' + event.data.purchaseId + '\nAmount: $' + event.data.amount +
+            '\nExternal Transaction ID: ' + extTxId
+          );
+          document.getElementById('queryTxId').value = extTxId;
+          setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:tip:error') {
+          window.removeEventListener('message', onMessage);
+          showStatus('tipStatus', 'error', 'Tip failed: ' + (event.data.error || 'Unknown'));
+        } else if (event.data && event.data.type === 'videa:popup:closed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('tipStatus', 'info', 'Tip popup closed.');
+        }
+      }
+
+      window.addEventListener('message', onMessage);
+    }
+
+    // ============================================================
+    // FAN: Subscribe (Popup Flow)
+    // ============================================================
+
+    async function openSubscribePopup() {
+      if (!state.config.hasApiKey) {
+        alert('API Key not configured.');
+        return;
+      }
+      const fanUserId = state.fan.user && state.fan.user.id;
+      if (!fanUserId) {
+        showStatus('subscribeStatus', 'error', 'Connect Fan wallet first (user_id is required).');
+        return;
+      }
+      const creatorId = document.getElementById('popupSubCreatorId').value.trim();
+      const price = document.getElementById('popupSubAmount').value.trim();
+      const revenuePlan = document.getElementById('popupSubPlan').value;
+      const refCode = document.getElementById('popupSubRefCode').value.trim();
+
+      if (!creatorId || !price) {
+        showStatus('subscribeStatus', 'error', 'Enter creator user ID and monthly price.');
+        return;
+      }
+
+      // Step 1: Create payment intent server-side
+      showStatus('subscribeStatus', 'info', 'Creating payment intent...');
+      const customSubExtTxId = document.getElementById('popupSubExtTxId').value.trim();
+      const subExternalTxId = customSubExtTxId || crypto.randomUUID();
+      let intentId;
+      try {
+        const res = await fetch('/api/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'subscribe',
+            creatorUserId: creatorId,
+            amount: parseFloat(price),
+            revenuePlan: revenuePlan,
+            externalTransactionId: subExternalTxId,
+            ...(refCode ? { distributionLinkCode: refCode } : {}),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showStatus('subscribeStatus', 'error', 'Intent failed: ' + (data.error || 'Unknown'));
+          return;
+        }
+        intentId = data.intentId;
+      } catch (err) {
+        showStatus('subscribeStatus', 'error', 'Intent failed: ' + err.message);
+        return;
+      }
+
+      // Step 2: Open popup with intent_id and optional display customisation
+      const videaUrl = state.config.videaUrl;
+      let popupUrl = videaUrl + '/subscribe'
+        + '?client_id=' + encodeURIComponent(state.config.apiKeyId)
+        + '&redirect_uri=' + encodeURIComponent(window.location.origin)
+        + '&user_id=' + encodeURIComponent(fanUserId)
+        + '&intent_id=' + encodeURIComponent(intentId);
+
+      const priceLabel = document.getElementById('popupSubPriceLabel').value.trim();
+      const priceSuffix = document.getElementById('popupSubPriceSuffix').value.trim();
+      const priceDesc = document.getElementById('popupSubPriceDesc').value.trim();
+      const buttonLabel = document.getElementById('popupSubButtonLabel').value.trim();
+      if (priceLabel) popupUrl += '&price_label=' + encodeURIComponent(priceLabel);
+      if (priceSuffix) popupUrl += '&price_suffix=' + encodeURIComponent(priceSuffix);
+      if (priceDesc) popupUrl += '&price_description=' + encodeURIComponent(priceDesc);
+      if (buttonLabel) popupUrl += '&button_label=' + encodeURIComponent(buttonLabel);
+
+      const popup = window.open(popupUrl, 'videa_subscribe', 'width=450,height=700,left=200,top=100');
+
+      function onMessage(event) {
+        const expectedOrigin = new URL(videaUrl).origin;
+        if (event.origin !== expectedOrigin) return;
+
+        if (event.data && event.data.type === 'videa:subscribe:success') {
+          window.removeEventListener('message', onMessage);
+          const extTxId = event.data.externalTransactionId || subExternalTxId;
+          if (event.data.duplicate) {
+            showStatus('subscribeStatus', 'info',
+              'Already subscribed!\nYou already have an active subscription to this creator.\nPurchase ID: ' + event.data.purchaseId +
+              '\nExternal Transaction ID: ' + extTxId
+            );
+          } else {
+            showStatus('subscribeStatus', 'success',
+              'Subscribed!\nPurchase ID: ' + event.data.purchaseId +
+              '\nExternal Transaction ID: ' + extTxId
+            );
+          }
+          document.getElementById('queryTxId').value = extTxId;
+          setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:subscribe:error') {
+          window.removeEventListener('message', onMessage);
+          showStatus('subscribeStatus', 'error', 'Subscribe failed: ' + (event.data.error || 'Unknown'));
+        } else if (event.data && event.data.type === 'videa:popup:closed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('subscribeStatus', 'info', 'Subscribe popup closed.');
+        }
+      }
+
+      window.addEventListener('message', onMessage);
+    }
+
+    // ============================================================
+    // FAN: Query by External Transaction ID
+    // ============================================================
+
+    async function queryByExternalTxId() {
+      const txId = document.getElementById('queryTxId').value.trim();
+      if (!txId) {
+        showStatus('queryTxStatus', 'error', 'Enter an External Transaction ID.');
+        return;
+      }
+      const token = state.fan.token;
+      if (!token) {
+        showStatus('queryTxStatus', 'error', 'Connect Fan wallet first.');
+        return;
+      }
+
+      showStatus('queryTxStatus', 'info', 'Querying...');
+      try {
+        const data = await apiCall(
+          '/api/v1/external/purchase/' + encodeURIComponent(txId),
+          { bearerToken: token }
+        );
+        const record = data.purchase;
+        if (!record) {
+          showStatus('queryTxStatus', 'error', 'Not found.');
+          return;
+        }
+        const action = data.action;
+        const category = record.category || 'purchase';
+        let msg = category.charAt(0).toUpperCase() + category.slice(1) + ' found:\n';
+        msg += 'ID: ' + record.id + '\n';
+        msg += 'Category: ' + category + '\n';
+        msg += 'Amount: ' + record.amount + ' ' + record.currency + '\n';
+        msg += 'Chain: ' + record.chainId + '\n';
+        if (action) {
+          msg += '\nSettlement: ' + action.status;
+          if (action.executionTxHash) msg += '\nTx Hash: ' + action.executionTxHash;
+          if (action.explorerUrl) msg += '\nExplorer: ' + action.explorerUrl;
+          if (action.errorMessage) msg += '\nError: ' + action.errorMessage;
+        } else {
+          msg += '\nSettlement: no action record';
+        }
+        showStatus('queryTxStatus', 'success', msg);
+      } catch (err) {
+        showStatus('queryTxStatus', 'error', 'Query failed: ' + err.message);
+      }
+    }
+
+    // ============================================================
+    // CREATOR: Earnings
+    // ============================================================
+
+    async function refreshCreatorEarnings() {
+      if (!state.creator.token || !state.creator.user) return;
+      try {
+        const userId = state.creator.user.id;
+        const data = await apiCall(
+          '/api/v1/external/creator/earnings?creatorUserId=' + encodeURIComponent(userId),
+          { bearerToken: state.creator.token }
+        );
+        let html = '';
+        if (data.summary) {
+          html += '<div class="stat-row"><span class="stat-label">Total Earnings</span><span class="stat-value">$' + (data.summary.totalEarnings || 0).toFixed(2) + '</span></div>';
+          html += '<div class="stat-row"><span class="stat-label">This Month</span><span class="stat-value">$' + (data.summary.thisMonth || 0).toFixed(2) + '</span></div>';
+        }
+        if (data.transactions && data.transactions.length > 0) {
+          html += '<div style="margin-top:8px; font-size:0.78rem; color:#888;">Recent Transactions:</div>';
+          html += '<table class="data-table"><tr><th>Type</th><th>Amount</th><th>Date</th><th>On-chain</th></tr>';
+          for (const tx of data.transactions.slice(0, 10)) {
+            html += '<tr><td>' + escapeHtml(tx.type) + '</td><td>$' + parseFloat(tx.amount).toFixed(2) + '</td><td>' + formatTime(tx.createdAt) + '</td><td>' + txLink(tx) + '</td></tr>';
+          }
+          html += '</table>';
+        }
+        document.getElementById('creatorEarningsDisplay').innerHTML = html || '<span style="color:#666">No earnings yet</span>';
+      } catch (e) {
+        showStatus('creatorEarningsStatus', 'error', e.message);
+      }
+    }
+
+    // ============================================================
+    // DISTRIBUTOR: Earnings
+    // ============================================================
+
+    async function refreshDistributorEarnings() {
+      if (!state.distributor.token || !state.distributor.user) return;
+      try {
+        const userId = state.distributor.user.id;
+        const data = await apiCall(
+          '/api/v1/external/distributor/earnings?distributorUserId=' + encodeURIComponent(userId),
+          { bearerToken: state.distributor.token }
+        );
+        let html = '';
+        if (data.summary) {
+          html += '<div class="stat-row"><span class="stat-label">Total Earnings</span><span class="stat-value">$' + (data.summary.totalEarnings || 0).toFixed(2) + '</span></div>';
+          html += '<div class="stat-row"><span class="stat-label">This Month</span><span class="stat-value">$' + (data.summary.thisMonth || 0).toFixed(2) + '</span></div>';
+        }
+        if (data.transactions && data.transactions.length > 0) {
+          html += '<div style="margin-top:8px; font-size:0.78rem; color:#888;">Recent Transactions:</div>';
+          html += '<table class="data-table"><tr><th>Type</th><th>Amount</th><th>Date</th><th>On-chain</th></tr>';
+          for (const tx of data.transactions.slice(0, 10)) {
+            html += '<tr><td>' + escapeHtml(tx.type) + '</td><td>$' + parseFloat(tx.amount).toFixed(2) + '</td><td>' + formatTime(tx.createdAt) + '</td><td>' + txLink(tx) + '</td></tr>';
+          }
+          html += '</table>';
+        }
+        document.getElementById('distributorEarningsDisplay').innerHTML = html || '<span style="color:#666">No earnings yet</span>';
+      } catch (e) {
+        showStatus('distributorEarningsStatus', 'error', e.message);
+      }
+    }
+
+    // ============================================================
+    // DISTRIBUTOR: Distribution Links
+    // ============================================================
+
+    async function createDistributionLink() {
+      if (!state.distributor.token || !state.distributor.user) { alert('Connect Distributor wallet first'); return; }
+      const creatorId = document.getElementById('linkCreatorId').value.trim();
+
+      if (!creatorId) {
+        showStatus('linkStatus', 'error', 'Enter creator user ID.');
+        return;
+      }
+
+      try {
+        const data = await apiCall('/api/v1/external/distribution-links', {
+          method: 'POST',
+          body: {
+            creatorUserId: creatorId,
+            distributorUserId: state.distributor.user.id
+          },
+          bearerToken: state.distributor.token
+        });
+        const linkCode = data.link ? data.link.linkCode : '(unknown)';
+        showStatus('linkStatus', 'success',
+          'Link created!\nCode: ' + linkCode + '\n\nCopy this code into the "Ref Code" field in the Fan panel.'
+        );
+        listDistributionLinks();
+      } catch (e) {
+        showStatus('linkStatus', 'error', e.message);
+      }
+    }
+
+    async function listDistributionLinks() {
+      if (!state.distributor.token || !state.distributor.user) return;
+      try {
+        const userId = state.distributor.user.id;
+        const data = await apiCall(
+          '/api/v1/external/distribution-links?distributorUserId=' + encodeURIComponent(userId),
+          { bearerToken: state.distributor.token }
+        );
+        const links = data.links || [];
+        if (links.length === 0) {
+          document.getElementById('linkList').innerHTML = '<span style="color:#666; font-size:0.78rem;">No links yet</span>';
+          return;
+        }
+        let html = '<table class="data-table"><tr><th>Link Code</th><th>Creator</th><th>Active</th><th>Conversions</th><th>Earnings</th><th></th></tr>';
+        for (const l of links) {
+          const shortCode = l.linkCode.slice(0, 8) + '...';
+          const creatorLabel = l.creatorNickname || l.creatorUserId || l.creatorId || '';
+          html += '<tr>' +
+            '<td title="' + escapeHtml(l.linkCode) + '">' + shortCode +
+            ' <button class="copy-btn" onclick="copyToClipboard(\'' + escapeHtml(l.linkCode) + '\')">copy</button></td>' +
+            '<td title="' + escapeHtml(l.creatorUserId || l.creatorId || '') + '">' + escapeHtml(creatorLabel) + '</td>' +
+            '<td>' + (l.isActive ? 'Yes' : 'No') + '</td>' +
+            '<td>' + (l.conversionCount || 0) + '</td>' +
+            '<td>$' + parseFloat(l.distributorEarnings || 0).toFixed(2) + '</td>' +
+            '<td>' + (l.isActive
+              ? '<button class="btn btn-danger btn-sm" onclick="deactivateLink(\'' + escapeHtml(l.linkCode) + '\')">Deactivate</button>'
+              : '') + '</td>' +
+            '</tr>';
+        }
+        html += '</table>';
+        document.getElementById('linkList').innerHTML = html;
+      } catch (e) {
+        document.getElementById('linkList').innerHTML = '<span style="color:#f87171; font-size:0.78rem;">' + escapeHtml(e.message) + '</span>';
+      }
+    }
+
+    async function deactivateLink(linkCode) {
+      try {
+        await apiCall('/api/v1/external/distribution-links', {
+          method: 'DELETE',
+          body: { linkCode },
+          bearerToken: state.distributor.token
+        });
+        showStatus('linkStatus', 'success', 'Link deactivated.');
+        listDistributionLinks();
+      } catch (e) {
+        showStatus('linkStatus', 'error', e.message);
+      }
+    }
+
+    // ============================================================
+    // UTILITIES
+    // ============================================================
+
+    function showStatus(elementId, type, message) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      const cls = type === 'success' ? 'status-success' : type === 'error' ? 'status-error' : 'status-info';
+      el.innerHTML = '<div class="status ' + cls + '">' + escapeHtml(message) + '</div>';
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function formatTime(isoStr) {
+      if (!isoStr) return '-';
+      try {
+        return new Date(isoStr).toLocaleTimeString();
+      } catch { return isoStr; }
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Copied: ' + text);
+      }).catch(() => {
+        prompt('Copy this link code:', text);
+      });
+    }
+  </script>
+
+</body>
+</html>
