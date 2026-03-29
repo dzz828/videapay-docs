@@ -1,1 +1,0 @@
-# videapay-docs
