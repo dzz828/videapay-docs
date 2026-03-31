@@ -160,12 +160,12 @@ components:
           description: type=purchase 时必填
         price:
           type: number
-          minimum: 0.01
+          minimum: 0.02
           maximum: 10000
           description: type=purchase 时必填
         amount:
           type: number
-          minimum: 0.01
+          minimum: 0.02
           maximum: 10000
           description: type=subscribe 和 type=tip 时必填
         externalTransactionId:
@@ -699,7 +699,7 @@ paths:
                   description: 外部交易标识符
                 price:
                   type: number
-                  minimum: 0.01
+                  minimum: 0.02
                 creatorUserId:
                   type: string
                 chainId:
@@ -713,7 +713,7 @@ paths:
                   description: 本次交易的收益分成方案。
                 intentId:
                   type: string
-                  description: 支付意图 ID。提供时，意图参数覆盖请求体参数。
+                  description: 支付意图 ID。提供时，意图参数覆盖请求体参数。对于打赏（tip），请求体中的 `amount` 优先于意图金额，允许用户在弹窗中自定义打赏金额。
       responses:
         "201":
           description: 购买已创建
