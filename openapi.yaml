@@ -160,12 +160,12 @@ components:
           description: type=purchase 时必填
         price:
           type: number
-          minimum: 0.02
+          minimum: 0.2
           maximum: 10000
           description: type=purchase 时必填
         amount:
           type: number
-          minimum: 0.02
+          minimum: 0.2
           maximum: 10000
           description: type=subscribe 和 type=tip 时必填
         externalTransactionId:
@@ -699,7 +699,7 @@ paths:
                   description: 外部交易标识符
                 price:
                   type: number
-                  minimum: 0.02
+                  minimum: 0.2
                 creatorUserId:
                   type: string
                 chainId:
