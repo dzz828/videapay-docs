@@ -158,16 +158,11 @@ components:
         externalContentId:
           type: string
           description: type=purchase 时必填
-        price:
-          type: number
-          minimum: 0.2
-          maximum: 10000
-          description: type=purchase 时必填
         amount:
           type: number
           minimum: 0.2
           maximum: 10000
-          description: type=subscribe 和 type=tip 时必填
+          description: 所有类型均必填（purchase、subscribe、tip）
         externalTransactionId:
           type: string
           description: 所有类型（purchase、subscribe、tip）均必填。你的外部交易标识符。
@@ -198,9 +193,6 @@ components:
           nullable: true
         externalContentId:
           type: string
-          nullable: true
-        price:
-          type: number
           nullable: true
         amount:
           type: number
@@ -504,10 +496,6 @@ paths:
                             type: string
                           nickname:
                             type: string
-                          isCreator:
-                            type: boolean
-                          isDistributor:
-                            type: boolean
                       state:
                         type: string
 
@@ -560,10 +548,6 @@ paths:
                         type: string
                       nickname:
                         type: string
-                      isCreator:
-                        type: boolean
-                      isDistributor:
-                        type: boolean
 
   /auth/token/refresh:
     post:
@@ -673,7 +657,7 @@ paths:
       summary: 创建购买（内容、订阅或打赏）
       description: |
         创建 Purchase 记录。`category` 决定支付类型：
-        - `CONTENT` — 一次性内容购买（需要 `externalContentId` 和 `price`）
+        - `CONTENT` — 一次性内容购买（需要 `externalContentId` 和 `amount`）
         - `SUBSCRIPTION` — 创作者订阅（需要 `amount`）
         - `TIP` — 创作者打赏（需要 `amount`）
 
@@ -690,14 +674,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [externalContentId, price, creatorUserId, chainId, token, revenuePlan, externalTransactionId]
+              required: [externalContentId, amount, creatorUserId, chainId, token, revenuePlan, externalTransactionId]
               properties:
                 externalContentId:
                   type: string
                 externalTransactionId:
                   type: string
                   description: 外部交易标识符
-                price:
+                amount:
                   type: number
                   minimum: 0.2
                 creatorUserId:
@@ -728,8 +712,6 @@ paths:
                     type: string
                   actionId:
                     type: string
-                  category:
-                    $ref: "#/components/schemas/PurchaseCategory"
                   externalTransactionId:
                     type: string
                   duplicate:
