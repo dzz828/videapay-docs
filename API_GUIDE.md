@@ -367,9 +367,14 @@ Access-Control-Max-Age: 86400
 2. 弹窗连接钱包，内部执行 SIWE 认证
 3. 用户选择链/代币/金额，批准 ERC20，向 VimoVault 充值
 4. 弹窗回传给父窗口：
+   - 结算中：{ type: 'videa:deposit:settling', transactionHash, chainId, amount, token, state }
    - 成功：{ type: 'videa:deposit:success', transactionHash, chainId, amount, token, state }
    - 错误：{ type: 'videa:deposit:error', error: '...' }
    - 关闭：{ type: 'videa:deposit:closed' }
+
+   充值确认后弹窗先发送 `settling`，余额入账后再发送 `success`。
+   如果弹窗在 `settling` 和 `success` 之间关闭，父窗口会收到 `closed`，
+   可使用 `transactionHash` 查询充值状态。
 ```
 
 **安全性：** Bearer token 在 Videa 域的弹窗中创建和使用，永远不会暴露给父窗口。父窗口只接收充值结果。
@@ -483,12 +488,23 @@ const popup = window.open(
 
 > **统一购买模型：** 三种支付类型（购买、订阅、打赏）均创建 Purchase 记录，通过 `category` 字段区分：`CONTENT`（购买）、`SUBSCRIPTION`（订阅）、`TIP`（打赏）。所有类型都要求 `externalTransactionId`。对于订阅和打赏，`externalTransactionId` 同时用作 `externalContentId`。所有支付状态均通过 `GET /api/v1/external/purchase/{id}` 查询。
 
-所有支付弹窗（购买、订阅、打赏）共享以下两个事件：
+所有支付弹窗（购买、订阅、打赏）共享以下事件模式：
 
 | 事件类型 | 含义 |
 |---------|------|
-| `videa:popup:closed` | 用户在未完成操作的情况下关闭了弹窗 |
+| `videa:{type}:settling` | 支付已提交（余额已扣除），正在链上结算。包含 `purchaseId` 和 `actionId`，父窗口应保存以备后续查询 |
+| `videa:{type}:success` | 链上结算完成，支付成功确认 |
+| `videa:{type}:failed` | 链上结算失败，余额已退还。包含 `purchaseId`、`actionId` 和 `error` |
+| `videa:{type}:error` | 签名或 API 错误（结算前），未创建支付记录 |
+| `videa:popup:closed` | 用户关闭了弹窗。如果之前已收到 `settling` 消息，可使用 `actionId` 通过 `GET /api/v1/external/actions/{actionId}/status` 查询结算状态 |
 | `videa:popup:error` | SIWE 认证失败 |
+
+**消息序列：**
+- 正常流程：`settling` → `success`
+- 弹窗提前关闭：`settling` → `closed`（父窗口可轮询状态）
+- 结算失败：`settling` → `failed`（余额已退还）
+- 超时后关闭：`settling` → `success`（支付已提交，结算终将完成）
+- 签名/API 错误：仅 `error`（无 `settling` 消息）
 
 所有支付弹窗的必填公共 URL 参数：
 
@@ -538,17 +554,31 @@ URL 参数：
   │                                  │  POST /api/v1/external/purchase
   │                                  │
   │  postMessage({                   │
+  │    type: 'videa:purchase:settling',│
+  │    purchaseId: 'clx...',         │
+  │    actionId: 'uuid...',          │
+  │    contentId: 'prod-123',        │
+  │    externalTransactionId:         │
+  │      'your-tx-123',              │
+  │    state: '...'                  │
+  │  }, targetOrigin)                │
+  │<─────────────────────────────────│
+  │                                  │  等待链上结算（~1-2 分钟）
+  │  postMessage({                   │
   │    type: 'videa:purchase:success',│
   │    purchaseId: 'clx...',         │
   │    contentId: 'prod-123',        │
   │    externalTransactionId:         │
   │      'your-tx-123',              │
-  │    duplicate: false,              │
   │    state: '...'                  │
   │  }, targetOrigin)                │
   │<─────────────────────────────────│
   │                                  │  2 秒后自动关闭
-  │  错误时：{                        │
+  │  结算失败时：{                     │
+  │    type: 'videa:purchase:failed',│
+  │    purchaseId, actionId, error   │
+  │  }                               │
+  │  签名/API 错误时：{               │
   │    type: 'videa:purchase:error', │
   │    error: '...'                  │
   │  }                               │
@@ -566,23 +596,36 @@ const popup = window.open(
   'videa_purchase', 'width=450,height=700,left=200,top=100'
 );
 
+let purchaseActionId = null;
 window.addEventListener('message', function handler(event) {
   const expectedOrigin = new URL('https://api.videa.app').origin;
   if (event.origin !== expectedOrigin) return;
 
-  if (event.data.type === 'videa:purchase:success') {
+  if (event.data.type === 'videa:purchase:settling') {
+    // 支付已提交，正在链上结算。不要移除监听器。
+    purchaseActionId = event.data.actionId;
+    console.log('支付结算中...', event.data.purchaseId, event.data.actionId);
+  } else if (event.data.type === 'videa:purchase:success') {
     window.removeEventListener('message', handler);
     if (event.data.duplicate) {
       console.log('用户已购买过该内容', event.data.purchaseId);
     } else {
-      console.log('购买成功', event.data.purchaseId);
+      console.log('链上结算完成', event.data.purchaseId);
     }
+  } else if (event.data.type === 'videa:purchase:failed') {
+    window.removeEventListener('message', handler);
+    console.error('链上结算失败，余额已退还', event.data.error);
   } else if (event.data.type === 'videa:purchase:error') {
     window.removeEventListener('message', handler);
     console.error('购买失败', event.data.error);
   } else if (event.data.type === 'videa:popup:closed') {
     window.removeEventListener('message', handler);
-    console.log('用户取消了购买');
+    if (purchaseActionId) {
+      // 结算中关闭，可通过 GET /api/v1/external/actions/{actionId}/status 查询
+      console.log('弹窗关闭，可查询结算状态', purchaseActionId);
+    } else {
+      console.log('用户取消了购买');
+    }
   }
 });
 ```
@@ -619,17 +662,23 @@ const popup = window.open(
   'videa_subscribe', 'width=450,height=700,left=200,top=100'
 );
 
+let subscribeActionId = null;
 window.addEventListener('message', function handler(event) {
   if (event.origin !== new URL('https://api.videa.app').origin) return;
 
-  if (event.data.type === 'videa:subscribe:success') {
+  if (event.data.type === 'videa:subscribe:settling') {
+    subscribeActionId = event.data.actionId;
+    console.log('订阅结算中...', event.data.purchaseId);
+  } else if (event.data.type === 'videa:subscribe:success') {
     window.removeEventListener('message', handler);
-    // { purchaseId, externalTransactionId, duplicate?, state? }
     if (event.data.duplicate) {
       console.log('用户已有该订阅', event.data.purchaseId);
     } else {
       console.log('订阅成功', event.data.purchaseId);
     }
+  } else if (event.data.type === 'videa:subscribe:failed') {
+    window.removeEventListener('message', handler);
+    console.error('订阅结算失败，余额已退还', event.data.error);
   } else if (event.data.type === 'videa:subscribe:error') {
     window.removeEventListener('message', handler);
     console.error('订阅失败', event.data.error);
@@ -643,8 +692,10 @@ window.addEventListener('message', function handler(event) {
 
 | 事件类型 | 数据字段 | 说明 |
 |---------|---------|------|
+| `videa:subscribe:settling` | `purchaseId`, `actionId`, `externalTransactionId?`, `state?` | 订阅已提交，链上结算中 |
 | `videa:subscribe:success` | `purchaseId`, `externalTransactionId`, `duplicate?`, `state?` | 订阅成功（`duplicate: true` 表示已有相同记录） |
-| `videa:subscribe:error` | `error`, `state?` | 订阅失败 |
+| `videa:subscribe:failed` | `purchaseId`, `actionId`, `error`, `state?` | 链上结算失败，余额已退还 |
+| `videa:subscribe:error` | `error`, `state?` | 签名/API 错误 |
 | `videa:popup:closed` | — | 用户取消 |
 
 ---
@@ -673,13 +724,19 @@ const popup = window.open(
   'videa_tip', 'width=450,height=700,left=200,top=100'
 );
 
+let tipActionId = null;
 window.addEventListener('message', function handler(event) {
   if (event.origin !== new URL('https://api.videa.app').origin) return;
 
-  if (event.data.type === 'videa:tip:success') {
+  if (event.data.type === 'videa:tip:settling') {
+    tipActionId = event.data.actionId;
+    console.log('打赏结算中...', event.data.purchaseId, '金额', event.data.amount);
+  } else if (event.data.type === 'videa:tip:success') {
     window.removeEventListener('message', handler);
-    // { purchaseId, amount, externalTransactionId, state? }
     console.log('打赏成功', event.data.purchaseId, '金额', event.data.amount);
+  } else if (event.data.type === 'videa:tip:failed') {
+    window.removeEventListener('message', handler);
+    console.error('打赏结算失败，余额已退还', event.data.error);
   } else if (event.data.type === 'videa:tip:error') {
     window.removeEventListener('message', handler);
     console.error('打赏失败', event.data.error);
@@ -693,9 +750,38 @@ window.addEventListener('message', function handler(event) {
 
 | 事件类型 | 数据字段 | 说明 |
 |---------|---------|------|
+| `videa:tip:settling` | `purchaseId`, `actionId`, `amount`, `externalTransactionId?`, `state?` | 打赏已提交，链上结算中 |
 | `videa:tip:success` | `purchaseId`, `amount`, `externalTransactionId`, `state?` | 打赏成功 |
-| `videa:tip:error` | `error`, `state?` | 打赏失败 |
+| `videa:tip:failed` | `purchaseId`, `actionId`, `error`, `state?` | 链上结算失败，余额已退还 |
+| `videa:tip:error` | `error`, `state?` | 签名/API 错误 |
 | `videa:popup:closed` | — | 用户取消 |
+
+---
+
+### 结算状态查询
+
+当弹窗在结算过程中关闭时，父窗口已有 `actionId`（从 `settling` 消息获取），可轮询结算状态：
+
+```
+GET /api/v1/external/actions/{actionId}/status
+Authorization: Bearer {token}
+
+响应：
+{
+  "status": "PENDING" | "EXECUTING" | "COMPLETED" | "FAILED" | "PERMANENTLY_FAILED" | "REFUNDED",
+  "executionTxHash": "0x..." | null,
+  "errorMessage": "..." | null
+}
+```
+
+| 状态 | 含义 |
+|-----|------|
+| `PENDING` | 等待执行 |
+| `EXECUTING` | 正在链上执行 |
+| `COMPLETED` | 链上结算完成 |
+| `FAILED` | 执行失败，将自动重试 |
+| `PERMANENTLY_FAILED` | 超过最大重试次数 |
+| `REFUNDED` | 余额已退还 |
 
 ---
 

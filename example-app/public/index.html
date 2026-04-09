@@ -850,11 +850,20 @@
 
       const popup = window.open(popupUrl, 'videa_deposit', 'width=450,height=700,left=200,top=100');
 
+      let depositSettling = false;
       function onMessage(event) {
         const expectedOrigin = new URL(videaUrl).origin;
         if (event.origin !== expectedOrigin) return;
 
-        if (event.data && event.data.type === 'videa:deposit:success') {
+        if (event.data && event.data.type === 'videa:deposit:settling') {
+          depositSettling = true;
+          showStatus('depositStatus', 'info',
+            'Deposit settling on blockchain...\n' +
+            'Tx: ' + event.data.transactionHash + '\n' +
+            'Chain: ' + event.data.chainId + '\n' +
+            'Amount: ' + event.data.amount + ' ' + event.data.token
+          );
+        } else if (event.data && event.data.type === 'videa:deposit:success') {
           window.removeEventListener('message', onMessage);
           showStatus('depositStatus', 'success',
             'Deposit successful!\n' +
@@ -868,7 +877,11 @@
           showStatus('depositStatus', 'error', 'Deposit error: ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:deposit:closed') {
           window.removeEventListener('message', onMessage);
-          showStatus('depositStatus', 'info', 'Deposit popup closed.');
+          if (depositSettling) {
+            showStatus('depositStatus', 'info', 'Deposit popup closed during settlement. Balance will update shortly.');
+          } else {
+            showStatus('depositStatus', 'info', 'Deposit popup closed.');
+          }
         }
       }
 
@@ -977,11 +990,18 @@
 
       const popup = window.open(popupUrl, 'videa_purchase', 'width=450,height=700,left=200,top=100');
 
+      let purchaseActionId = null;
       function onMessage(event) {
         const expectedOrigin = new URL(videaUrl).origin;
         if (event.origin !== expectedOrigin) return;
 
-        if (event.data && event.data.type === 'videa:purchase:success') {
+        if (event.data && event.data.type === 'videa:purchase:settling') {
+          purchaseActionId = event.data.actionId;
+          showStatus('purchaseStatus', 'info',
+            'Payment settling on blockchain...\nPurchase ID: ' + event.data.purchaseId +
+            '\nAction ID: ' + event.data.actionId
+          );
+        } else if (event.data && event.data.type === 'videa:purchase:success') {
           window.removeEventListener('message', onMessage);
           const extTxId = event.data.externalTransactionId || purchaseExternalTxId;
           if (event.data.duplicate) {
@@ -992,19 +1012,26 @@
             );
           } else {
             showStatus('purchaseStatus', 'success',
-              'Purchase successful!\nPurchase ID: ' + event.data.purchaseId +
+              'Purchase confirmed on-chain!\nPurchase ID: ' + event.data.purchaseId +
               '\nContent: ' + event.data.contentId +
               '\nExternal Transaction ID: ' + extTxId
             );
           }
           document.getElementById('queryTxId').value = extTxId;
           setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:purchase:failed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('purchaseStatus', 'error', 'Settlement failed (balance refunded): ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:purchase:error') {
           window.removeEventListener('message', onMessage);
           showStatus('purchaseStatus', 'error', 'Purchase failed: ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:popup:closed') {
           window.removeEventListener('message', onMessage);
-          showStatus('purchaseStatus', 'info', 'Purchase popup closed.');
+          if (purchaseActionId) {
+            showStatus('purchaseStatus', 'info', 'Popup closed during settlement. Action ID: ' + purchaseActionId + '\nUse Query to check status.');
+          } else {
+            showStatus('purchaseStatus', 'info', 'Purchase popup closed.');
+          }
         }
       }
 
@@ -1078,25 +1105,39 @@
 
       const popup = window.open(popupUrl, 'videa_tip', 'width=450,height=700,left=200,top=100');
 
+      let tipActionId = null;
       function onMessage(event) {
         const expectedOrigin = new URL(videaUrl).origin;
         if (event.origin !== expectedOrigin) return;
 
-        if (event.data && event.data.type === 'videa:tip:success') {
+        if (event.data && event.data.type === 'videa:tip:settling') {
+          tipActionId = event.data.actionId;
+          showStatus('tipStatus', 'info',
+            'Tip settling on blockchain...\nPurchase ID: ' + event.data.purchaseId +
+            '\nAmount: $' + event.data.amount
+          );
+        } else if (event.data && event.data.type === 'videa:tip:success') {
           window.removeEventListener('message', onMessage);
           const extTxId = event.data.externalTransactionId || tipExternalTxId;
           showStatus('tipStatus', 'success',
-            'Tip successful!\nPurchase ID: ' + event.data.purchaseId + '\nAmount: $' + event.data.amount +
+            'Tip confirmed on-chain!\nPurchase ID: ' + event.data.purchaseId + '\nAmount: $' + event.data.amount +
             '\nExternal Transaction ID: ' + extTxId
           );
           document.getElementById('queryTxId').value = extTxId;
           setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:tip:failed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('tipStatus', 'error', 'Settlement failed (balance refunded): ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:tip:error') {
           window.removeEventListener('message', onMessage);
           showStatus('tipStatus', 'error', 'Tip failed: ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:popup:closed') {
           window.removeEventListener('message', onMessage);
-          showStatus('tipStatus', 'info', 'Tip popup closed.');
+          if (tipActionId) {
+            showStatus('tipStatus', 'info', 'Popup closed during settlement. Action ID: ' + tipActionId);
+          } else {
+            showStatus('tipStatus', 'info', 'Tip popup closed.');
+          }
         }
       }
 
@@ -1175,11 +1216,17 @@
 
       const popup = window.open(popupUrl, 'videa_subscribe', 'width=450,height=700,left=200,top=100');
 
+      let subActionId = null;
       function onMessage(event) {
         const expectedOrigin = new URL(videaUrl).origin;
         if (event.origin !== expectedOrigin) return;
 
-        if (event.data && event.data.type === 'videa:subscribe:success') {
+        if (event.data && event.data.type === 'videa:subscribe:settling') {
+          subActionId = event.data.actionId;
+          showStatus('subscribeStatus', 'info',
+            'Subscription settling on blockchain...\nPurchase ID: ' + event.data.purchaseId
+          );
+        } else if (event.data && event.data.type === 'videa:subscribe:success') {
           window.removeEventListener('message', onMessage);
           const extTxId = event.data.externalTransactionId || subExternalTxId;
           if (event.data.duplicate) {
@@ -1189,18 +1236,25 @@
             );
           } else {
             showStatus('subscribeStatus', 'success',
-              'Subscribed!\nPurchase ID: ' + event.data.purchaseId +
+              'Subscribed (confirmed on-chain)!\nPurchase ID: ' + event.data.purchaseId +
               '\nExternal Transaction ID: ' + extTxId
             );
           }
           document.getElementById('queryTxId').value = extTxId;
           setTimeout(refreshFanBalance, 2000);
+        } else if (event.data && event.data.type === 'videa:subscribe:failed') {
+          window.removeEventListener('message', onMessage);
+          showStatus('subscribeStatus', 'error', 'Settlement failed (balance refunded): ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:subscribe:error') {
           window.removeEventListener('message', onMessage);
           showStatus('subscribeStatus', 'error', 'Subscribe failed: ' + (event.data.error || 'Unknown'));
         } else if (event.data && event.data.type === 'videa:popup:closed') {
           window.removeEventListener('message', onMessage);
-          showStatus('subscribeStatus', 'info', 'Subscribe popup closed.');
+          if (subActionId) {
+            showStatus('subscribeStatus', 'info', 'Popup closed during settlement. Action ID: ' + subActionId);
+          } else {
+            showStatus('subscribeStatus', 'info', 'Subscribe popup closed.');
+          }
         }
       }
 
