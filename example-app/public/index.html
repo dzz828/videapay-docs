@@ -408,7 +408,7 @@
         <!-- Tip (Popup) -->
         <div class="section">
           <h3>Send Tip</h3>
-          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa tip popup. User selects amount inside the popup.</p>
+          <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">Opens Videa tip popup. If amount is set, it's locked; otherwise user selects amount.</p>
           <div class="form-row">
             <div class="form-group">
               <label>Creator User ID</label>
@@ -420,7 +420,7 @@
             </div>
           </div>
           <div class="form-group">
-            <label>Suggested Amount (optional)</label>
+            <label>Fixed Amount (optional — locks popup when set)</label>
             <input type="number" id="popupTipAmount" step="0.01" placeholder="10.00">
           </div>
           <div class="form-group">
@@ -1071,7 +1071,7 @@
         const intentBody = {
           type: 'tip',
           creatorUserId: creatorId,
-          amount: amount ? parseFloat(amount) : 1, // default tip amount for intent
+          ...(amount ? { amount: parseFloat(amount) } : {}),
           revenuePlan: revenuePlan,
           externalTransactionId: tipExternalTxId,
           ...(refCode ? { distributionLinkCode: refCode } : {}),

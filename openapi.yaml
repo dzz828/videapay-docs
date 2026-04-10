@@ -162,7 +162,7 @@ components:
           type: number
           minimum: 0.2
           maximum: 10000
-          description: 所有类型均必填（purchase、subscribe、tip）
+          description: purchase 和 subscribe 必填；tip 可选。提供时弹窗锁定金额，不提供时用户自由选择。
         externalTransactionId:
           type: string
           description: 所有类型（purchase、subscribe、tip）均必填。你的外部交易标识符。
@@ -697,7 +697,7 @@ paths:
                   description: 本次交易的收益分成方案。
                 intentId:
                   type: string
-                  description: 支付意图 ID。提供时，意图参数覆盖请求体参数。对于打赏（tip），请求体中的 `amount` 优先于意图金额，允许用户在弹窗中自定义打赏金额。
+                  description: 支付意图 ID。提供时，意图参数覆盖请求体参数。
       responses:
         "201":
           description: 购买已创建

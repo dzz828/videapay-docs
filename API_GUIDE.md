@@ -447,12 +447,20 @@ Content-Type: application/json
   "revenuePlan": "BALANCED"
 }
 
-请求体（打赏）：
+请求体（打赏——固定金额）：
 {
   "type": "tip",
   "creatorUserId": "clx...",
   "externalTransactionId": "your-tip-123",
   "amount": 10,
+  "revenuePlan": "BALANCED"
+}
+
+请求体（打赏——用户自选金额）：
+{
+  "type": "tip",
+  "creatorUserId": "clx...",
+  "externalTransactionId": "your-tip-456",
   "revenuePlan": "BALANCED"
 }
 
@@ -711,6 +719,8 @@ URL 参数：
 ```
 
 `creator_name`：创作者名称（可选），传入后弹窗标题显示为 "Send a Tip to 创作者名称"。
+
+> **打赏金额锁定：** 创建打赏意图时，`amount` 为可选参数。提供时弹窗锁定该金额，用户无法修改；不提供时用户可自由选择打赏金额（预设或自定义）。
 
 **JavaScript 示例：**
 
