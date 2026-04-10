@@ -311,6 +311,14 @@
     <div class="config-info">
       <span>Videa: <span class="val" id="configVideaUrl">loading...</span></span>
       <span>API Key: <span id="configApiKey">loading...</span></span>
+      <span style="margin-left:auto;">
+        Popup Language:
+        <select id="popupLang" style="background:#222;color:#fff;border:1px solid #444;border-radius:4px;padding:2px 8px;font-size:0.82rem;">
+          <option value="">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </span>
     </div>
   </div>
 
@@ -669,6 +677,16 @@
     }
 
     // ============================================================
+    // POPUP LANGUAGE HELPER
+    // ============================================================
+
+    function appendLangParam(url) {
+      const lang = document.getElementById('popupLang').value;
+      if (lang) return url + '&lang=' + encodeURIComponent(lang);
+      return url;
+    }
+
+    // ============================================================
     // CONNECT WALLET (Popup Flow)
     // ============================================================
 
@@ -692,7 +710,7 @@
         popupUrl += '&user_id=' + encodeURIComponent(existingUser.id);
       }
 
-      const popup = window.open(popupUrl, 'videa_connect_' + role, 'width=450,height=650,left=200,top=100');
+      const popup = window.open(appendLangParam(popupUrl), 'videa_connect_' + role, 'width=450,height=650,left=200,top=100');
 
       function onMessage(event) {
         const expectedOrigin = new URL(videaUrl).origin;
@@ -848,7 +866,7 @@
         + '&redirect_uri=' + encodeURIComponent(origin)
         + '&user_id=' + encodeURIComponent(state.fan.user.id);
 
-      const popup = window.open(popupUrl, 'videa_deposit', 'width=450,height=700,left=200,top=100');
+      const popup = window.open(appendLangParam(popupUrl), 'videa_deposit', 'width=450,height=700,left=200,top=100');
 
       let depositSettling = false;
       function onMessage(event) {
@@ -988,7 +1006,7 @@
       const purchaseCreatorName = document.getElementById('popupPurchaseCreatorName').value.trim();
       if (purchaseCreatorName) popupUrl += '&creator_name=' + encodeURIComponent(purchaseCreatorName);
 
-      const popup = window.open(popupUrl, 'videa_purchase', 'width=450,height=700,left=200,top=100');
+      const popup = window.open(appendLangParam(popupUrl), 'videa_purchase', 'width=450,height=700,left=200,top=100');
 
       let purchaseActionId = null;
       function onMessage(event) {
@@ -1103,7 +1121,7 @@
       const tipCreatorName = document.getElementById('popupTipCreatorName').value.trim();
       if (tipCreatorName) popupUrl += '&creator_name=' + encodeURIComponent(tipCreatorName);
 
-      const popup = window.open(popupUrl, 'videa_tip', 'width=450,height=700,left=200,top=100');
+      const popup = window.open(appendLangParam(popupUrl), 'videa_tip', 'width=450,height=700,left=200,top=100');
 
       let tipActionId = null;
       function onMessage(event) {
@@ -1214,7 +1232,7 @@
       if (priceDesc) popupUrl += '&price_description=' + encodeURIComponent(priceDesc);
       if (buttonLabel) popupUrl += '&button_label=' + encodeURIComponent(buttonLabel);
 
-      const popup = window.open(popupUrl, 'videa_subscribe', 'width=450,height=700,left=200,top=100');
+      const popup = window.open(appendLangParam(popupUrl), 'videa_subscribe', 'width=450,height=700,left=200,top=100');
 
       let subActionId = null;
       function onMessage(event) {

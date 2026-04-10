@@ -351,6 +351,29 @@ Access-Control-Max-Age: 86400
    - user_id：Videa 用户 ID（从 token exchange 获取），用于标识用户。弹窗会验证连接的钱包是否属于该用户
 ```
 
+### 弹窗语言设置
+
+所有弹窗页面支持通过 URL 参数指定显示语言。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `lang` | string | 否 | 弹窗显示语言。支持的值：`en`（英文，默认）、`zh`（简体中文） |
+
+**示例：**
+
+```
+https://app.videa.io/purchase?client_id=videa_abc123&redirect_uri=https://your-app.com/callback&user_id=123&intent_id=456&lang=zh
+```
+
+**语言检测优先级：**
+
+1. `lang` URL 参数（最高优先级）
+2. `NEXT_LOCALE` Cookie（用户上次选择的语言）
+3. 浏览器 `Accept-Language` 头
+4. 默认英文
+
+**持久化：** 一旦用户通过 `lang` 参数或弹窗内的语言切换器选择语言，该选择将通过 Cookie 持久化，后续弹窗会自动使用该语言。
+
 ### 弹窗充值
 
 让用户无需构建自己的充值 UI 即可充值。弹窗自行处理钱包认证（SIWE）——不需要从父窗口传递 bearer token：
