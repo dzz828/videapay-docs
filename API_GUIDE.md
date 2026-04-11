@@ -121,7 +121,7 @@ REST API（`/api/v1/external/*`）仅用于查询操作（余额、购买状态�
 
 - Token 有效期 **24 小时**
 - 过期前使用 `POST /api/auth/token/refresh` 配合 `Authorization: Bearer <当前token>` 刷新
-- **刷新次数无限制** — 在 token 有效期内及过期后 **1 小时宽限期** 内均可刷新，每次刷新返回新的 24 小时 token，可实现无限期会话
+- **刷新次数无限制** — token 过期后仍可刷新（无时间限制），每次刷新返回新的 24 小时 token，可实现无限期会话。服务端通过 DB 验证会话和 API Key 状态作为安全保障
 - Token 刷新受 API 速率限制约束（认证端点：30 次/分钟）
 - Token 包含：`userId`、`walletAddress`、`sessionVersion`
 - 若用户的 `sessionVersion` 变更（如重置密码），现有 token 将失效

@@ -335,7 +335,11 @@
         <div class="user-identity" id="fanAddress"></div>
       </div>
 
-      <button class="btn btn-accent" id="fanConnectBtn" onclick="connectWallet('fan')">Connect Wallet</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn btn-accent" id="fanConnectBtn" onclick="connectWallet('fan')">Connect Wallet</button>
+        <button class="btn btn-default btn-sm" id="fanRefreshTokenBtn" style="display:none" onclick="refreshToken('fan')">Refresh Token</button>
+      </div>
+      <div id="fanRefreshTokenStatus"></div>
 
       <div id="fanSections" style="display:none;">
 
@@ -536,7 +540,11 @@
         <div class="user-identity" id="creatorAddress"></div>
       </div>
 
-      <button class="btn btn-accent" id="creatorConnectBtn" onclick="connectWallet('creator')">Connect Wallet</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn btn-accent" id="creatorConnectBtn" onclick="connectWallet('creator')">Connect Wallet</button>
+        <button class="btn btn-default btn-sm" id="creatorRefreshTokenBtn" style="display:none" onclick="refreshToken('creator')">Refresh Token</button>
+      </div>
+      <div id="creatorRefreshTokenStatus"></div>
 
       <div id="creatorSections" style="display:none;">
 
@@ -572,7 +580,11 @@
         <div class="user-identity" id="distributorAddress"></div>
       </div>
 
-      <button class="btn btn-accent" id="distributorConnectBtn" onclick="connectWallet('distributor')">Connect Wallet</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn btn-accent" id="distributorConnectBtn" onclick="connectWallet('distributor')">Connect Wallet</button>
+        <button class="btn btn-default btn-sm" id="distributorRefreshTokenBtn" style="display:none" onclick="refreshToken('distributor')">Refresh Token</button>
+      </div>
+      <div id="distributorRefreshTokenStatus"></div>
 
       <div id="distributorSections" style="display:none;">
 
@@ -656,6 +668,43 @@
     }
 
     loadConfig();
+
+    // ============================================================
+    // TOKEN REFRESH
+    // ============================================================
+
+    async function refreshToken(role) {
+      const roleState = state[role];
+      if (!roleState || !roleState.token) {
+        alert('Connect wallet first.');
+        return;
+      }
+
+      showStatus(role + 'RefreshTokenStatus', 'info', 'Refreshing token...');
+
+      try {
+        const resp = await fetch('/api/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method: 'POST',
+            endpoint: '/api/auth/token/refresh',
+            bearerToken: roleState.token,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+
+        if (resp.ok && data.token) {
+          roleState.token = data.token;
+          roleState.expiresAt = data.expiresAt;
+          showStatus(role + 'RefreshTokenStatus', 'ok', 'Token refreshed — expires ' + new Date(data.expiresAt).toLocaleString());
+        } else {
+          showStatus(role + 'RefreshTokenStatus', 'err', 'Refresh failed: ' + (data.error || 'HTTP ' + resp.status));
+        }
+      } catch (err) {
+        showStatus(role + 'RefreshTokenStatus', 'err', 'Refresh error: ' + err.message);
+      }
+    }
 
     // ============================================================
     // API CALL (via server proxy)
@@ -760,6 +809,7 @@
       document.getElementById(role + 'Address').textContent = displayName;
       document.getElementById(role + 'WalletInfo').style.display = 'block';
       document.getElementById(role + 'ConnectBtn').textContent = 'Reconnect';
+      document.getElementById(role + 'RefreshTokenBtn').style.display = '';
       document.getElementById(role + 'Sections').style.display = 'block';
 
       // Pre-fill nickname input with current value
