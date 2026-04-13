@@ -66,10 +66,14 @@ tags:
     description: 服务端创建的支付意图，用于安全的弹窗流程
   - name: 购买
     description: 统一支付操作（内容购买、订阅和打赏）。所有支付类型均创建带有 `category` 字段的 Purchase 记录。
+  - name: 充值
+    description: 充值通知和链上验证声明（由弹窗内部调用）
   - name: 用户
     description: 用户资料管理
   - name: 余额
     description: 用户余额查询
+  - name: 结算
+    description: 链上结算状态查询
   - name: 分销链接
     description: 外部分销链接管理
   - name: 收益
@@ -180,6 +184,22 @@ components:
           enum: [pending, completed, expired]
         creatorUserId:
           type: string
+        creatorWalletAddress:
+          type: string
+          nullable: true
+          description: 创作者钱包地址（供弹窗 EIP-712 签名使用）
+        distributorWalletAddress:
+          type: string
+          nullable: true
+          description: 分销商钱包地址（无分销商时为 null）
+        distributorFeeBps:
+          type: integer
+          nullable: true
+          description: 分销商费率（基点，0-10000）
+        distributorExpiryTimestamp:
+          type: integer
+          nullable: true
+          description: 分销商佣金到期的 UNIX 时间戳
         revenuePlan:
           $ref: "#/components/schemas/RevenueSharePlan"
         distributionLinkCode:
@@ -372,6 +392,58 @@ components:
           type: string
           format: date-time
 
+    EarningsTransaction:
+      type: object
+      description: 收益交易明细
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [purchase, subscription, tip]
+        amount:
+          type: number
+          description: 创作者/分销商实际分成金额
+        totalAmount:
+          type: number
+          description: 交易总金额
+        currency:
+          type: string
+        buyerNickname:
+          type: string
+        buyerAddress:
+          type: string
+        creatorName:
+          type: string
+          description: 分销商视角时显示的创作者名称
+        contentTitle:
+          type: string
+          nullable: true
+          description: 购买类型为 CONTENT 时的内容标题
+        transactionHash:
+          type: string
+          nullable: true
+          description: 链上结算交易哈希
+        explorerUrl:
+          type: string
+          nullable: true
+          description: 区块浏览器链接
+        chainId:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        linkCode:
+          type: string
+          nullable: true
+          description: 分销商视角时的分销链接码
+        hasDistributor:
+          type: boolean
+          description: 创作者视角时标识该交易是否有分销商参与
+        settled:
+          type: boolean
+          description: 链上结算是否完成
+
     Event:
       type: object
       properties:
@@ -402,8 +474,19 @@ paths:
     get:
       tags: [身份认证]
       summary: 获取 SIWE nonce
+      description: |
+        接受两种认证方式（二选一）：
+        - `X-API-Key` 请求头：用于直接 API 调用
+        - `?client_id=` 查询参数：用于弹窗页面认证流程（API 密钥记录 ID）
       security:
         - ApiKeyAuth: []
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: API 密钥记录 ID（弹窗流程使用，与 X-API-Key 二选一）
       responses:
         "200":
           description: 用于 SIWE 消息的 nonce
@@ -875,6 +958,309 @@ paths:
                     items:
                       $ref: "#/components/schemas/ChainBalance"
 
+  # --- 充值 ---
+  /v1/external/deposit/notify:
+    post:
+      tags: [充值]
+      summary: 创建 PENDING 充值记录
+      description: |
+        在链上充值交易发起后，立即创建 PENDING 状态的充值记录，
+        缩小对账窗口（链上已充值但数据库无记录的间隙）。
+        DepositWatcher 后续会认领该记录，用链上数据更新金额，
+        并将状态推进为 CONFIRMING → CREDITED。
+
+        由弹窗内部调用。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionHash, chainId, token, amount]
+              properties:
+                transactionHash:
+                  type: string
+                  pattern: "^0x[a-fA-F0-9]{64}$"
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+                token:
+                  $ref: "#/components/schemas/Token"
+                amount:
+                  type: number
+                  exclusiveMinimum: 0
+      responses:
+        "201":
+          description: 充值记录已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  depositId:
+                    type: string
+        "200":
+          description: 幂等——相同 PENDING 记录已存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  depositId:
+                    type: string
+                  existing:
+                    type: boolean
+                    enum: [true]
+        "409":
+          description: 充值已被处理（不再是 PENDING 状态）
+
+  /v1/external/deposit/claim:
+    post:
+      tags: [充值]
+      summary: 链上验证充值声明
+      description: |
+        当 /deposit/notify 调用遗漏时（浏览器关闭、网络错误等）的降级方案。
+        与 /deposit/notify 不同，此接口从链上验证交易回执和 Deposited 事件，
+        确认充值用户与已认证用户一致后创建充值记录。
+
+        由弹窗内部调用。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionHash, chainId]
+              properties:
+                transactionHash:
+                  type: string
+                  pattern: "^0x[a-fA-F0-9]{64}$"
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+      responses:
+        "201":
+          description: 充值记录已创建（链上验证通过）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  depositId:
+                    type: string
+                  token:
+                    $ref: "#/components/schemas/Token"
+                  amount:
+                    type: number
+        "200":
+          description: 幂等——充值记录已存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  depositId:
+                    type: string
+                  token:
+                    $ref: "#/components/schemas/Token"
+                  amount:
+                    type: number
+                  existing:
+                    type: boolean
+                    enum: [true]
+        "400":
+          description: 验证失败（交易失败、无 Deposited 事件、用户不匹配、未知代币等）
+        "404":
+          description: 链上未找到交易回执
+
+  # --- 订阅/打赏便捷别名 ---
+  /v1/external/subscribe:
+    post:
+      tags: [购买]
+      summary: 创建订阅（便捷别名）
+      description: |
+        便捷别名——等同于 `POST /v1/external/purchase` 并指定 `category=SUBSCRIPTION`。
+        `externalTransactionId` 同时用作 `externalContentId`。
+        由弹窗内部调用。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, signature, signatureDeadline, creatorUserId, chainId, token, amount, revenuePlan, externalTransactionId]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: 客户端提供的操作 ID
+                signature:
+                  type: string
+                  description: EIP-712 签名
+                signatureDeadline:
+                  type: integer
+                  description: 签名截止时间（Unix 时间戳，1 小时内）
+                creatorUserId:
+                  type: string
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+                token:
+                  $ref: "#/components/schemas/Token"
+                amount:
+                  type: number
+                  minimum: 0.2
+                  maximum: 10000
+                revenuePlan:
+                  $ref: "#/components/schemas/RevenueSharePlan"
+                externalTransactionId:
+                  type: string
+                distributionLinkCode:
+                  type: string
+                intentId:
+                  type: string
+                  description: 支付意图 ID。提供时覆盖请求体参数。
+      responses:
+        "201":
+          description: 订阅已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  purchaseId:
+                    type: string
+                  actionId:
+                    type: string
+                  externalTransactionId:
+                    type: string
+        "409":
+          description: 因余额验证中支付暂时中止
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationHoldError"
+
+  /v1/external/tip:
+    post:
+      tags: [购买]
+      summary: 创建打赏（便捷别名）
+      description: |
+        便捷别名——等同于 `POST /v1/external/purchase` 并指定 `category=TIP`。
+        `externalTransactionId` 同时用作 `externalContentId`。
+        由弹窗内部调用。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, signature, signatureDeadline, creatorUserId, chainId, token, amount, revenuePlan, externalTransactionId]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: 客户端提供的操作 ID
+                signature:
+                  type: string
+                  description: EIP-712 签名
+                signatureDeadline:
+                  type: integer
+                  description: 签名截止时间（Unix 时间戳，1 小时内）
+                creatorUserId:
+                  type: string
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+                token:
+                  $ref: "#/components/schemas/Token"
+                amount:
+                  type: number
+                  minimum: 0.2
+                  maximum: 10000
+                revenuePlan:
+                  $ref: "#/components/schemas/RevenueSharePlan"
+                externalTransactionId:
+                  type: string
+                distributionLinkCode:
+                  type: string
+                intentId:
+                  type: string
+                  description: 支付意图 ID。提供时覆盖请求体参数。
+      responses:
+        "201":
+          description: 打赏已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  purchaseId:
+                    type: string
+                  actionId:
+                    type: string
+                  externalTransactionId:
+                    type: string
+        "409":
+          description: 因余额验证中支付暂时中止
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationHoldError"
+
+  # --- 结算状态 ---
+  /v1/external/actions/{id}/status:
+    get:
+      tags: [结算]
+      summary: 查询链上结算状态
+      description: |
+        通过操作 ID 查询链上结算状态。弹窗在结算过程中关闭时，
+        父窗口可使用 settling 消息中的 `actionId` 轮询此接口。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 操作 ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 操作状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: "#/components/schemas/ActionStatus"
+                  executionTxHash:
+                    type: string
+                    nullable: true
+                  errorMessage:
+                    type: string
+                    nullable: true
+        "404":
+          description: 操作不存在
+
   # --- 分销链接 ---
   /v1/external/distribution-links:
     post:
@@ -1051,7 +1437,7 @@ paths:
                   breakdown:
                     type: object
                     properties:
-                      purchases:
+                      content:
                         type: object
                         properties:
                           total: { type: number }
@@ -1072,7 +1458,7 @@ paths:
                   transactions:
                     type: array
                     items:
-                      type: object
+                      $ref: "#/components/schemas/EarningsTransaction"
 
   /v1/external/distributor/earnings:
     get:
@@ -1115,7 +1501,7 @@ paths:
                   breakdown:
                     type: object
                     properties:
-                      purchases:
+                      content:
                         type: object
                         properties:
                           total: { type: number }
@@ -1136,4 +1522,4 @@ paths:
                   transactions:
                     type: array
                     items:
-                      type: object
+                      $ref: "#/components/schemas/EarningsTransaction"

@@ -25,7 +25,7 @@
 | 环境 | URL |
 |------|-----|
 | 生产环境 | `https://api.videa.app` |
-| 开发环境 | `http://localhost:3200` |
+| 开发环境 | `http://localhost:4300` |
 
 ### API 密钥
 
@@ -893,7 +893,10 @@ X-API-Key: videa_xxx
       "chainId": 137,
       "token": "USDT",
       "availableBalance": "100.000000",
-      "pendingBalance": "0.000000"
+      "pendingBalance": "0.000000",
+      "totalDeposited": "150.000000",
+      "totalSpent": "50.000000",
+      "totalWithdrawn": "0.000000"
     }
   ]
 }
@@ -1104,7 +1107,7 @@ X-API-Key: videa_xxx
   │    distributionLinkCode: "a1b2c3...",         │
   │    revenuePlan: "BALANCED" }                  │
   │──────────────────────────────────────────────>│
-  │  201 { intent: { id: "clx..." } }            │
+  │  201 { intentId: "clx...", expiresAt: "..." } │
   │<──────────────────────────────────────────────│
   │                                               │
   │  ③ 弹窗仅使用 intent_id                        │
@@ -1224,7 +1227,7 @@ X-API-Key: videa_xxx
     "thisMonth": 250.00
   },
   "breakdown": {
-    "purchases": { "total": 1000.00, "thisMonth": 150.00, "count": 50 },
+    "content": { "total": 1000.00, "thisMonth": 150.00, "count": 50 },
     "subscriptions": { "total": 400.50, "thisMonth": 80.00, "count": 40 },
     "tips": { "total": 100.00, "thisMonth": 20.00, "count": 20 }
   },
@@ -1397,7 +1400,7 @@ X-API-Key: videa_xxx
 
 | 层级 | 限制 | 适用于 |
 |------|------|--------|
-| 认证 | 10 次/分钟 | `/api/auth/*`（token 交换） |
+| 认证 | 30 次/分钟 | `/api/auth/*`（token 交换） |
 | 写操作 | 30 次/分钟 | 所有 POST、PUT、PATCH、DELETE 请求 |
 | 读操作 | 120 次/分钟 | 所有 GET 请求 |
 
@@ -1460,10 +1463,16 @@ X-RateLimit-Remaining: 118
 | GET | `/api/v1/external/revenue-plans` | API Key | 列出收益分成方案 |
 | POST | `/api/v1/external/payment-intents` | API Key | 创建支付意图 |
 | GET | `/api/v1/external/payment-intents/{id}` | Bearer+Key | 查询支付意图 |
+| GET | `/api/v1/external/purchase` | Bearer+Key | 通过 externalContentId 查询购买状态 |
 | GET | `/api/v1/external/purchase/{id}` | Bearer+Key | 购买/订阅/打赏详情 + 结算状态（`{id}` 为 `externalTransactionId`） |
+| POST | `/api/v1/external/subscribe` | Bearer+Key | 创建订阅（弹窗内部使用的便捷别名） |
+| POST | `/api/v1/external/tip` | Bearer+Key | 创建打赏（弹窗内部使用的便捷别名） |
 | GET | `/api/v1/external/user/{userId}/profile` | Bearer+Key | 获取用户资料 |
 | PUT | `/api/v1/external/user/{userId}/nickname` | Bearer+Key | 更新用户昵称 |
 | GET | `/api/v1/external/balance` | Bearer+Key | 获取用户余额 |
+| POST | `/api/v1/external/deposit/notify` | Bearer+Key | 创建 PENDING 充值记录（弹窗内部使用） |
+| POST | `/api/v1/external/deposit/claim` | Bearer+Key | 链上验证充值声明（弹窗内部使用） |
+| GET | `/api/v1/external/actions/{id}/status` | Bearer+Key | 查询链上结算状态 |
 | POST | `/api/v1/external/distribution-links` | Bearer+Key | 创建分销链接 |
 | DELETE | `/api/v1/external/distribution-links` | Bearer+Key | 停用分销链接 |
 | GET | `/api/v1/external/distribution-links` | Bearer+Key | 列出分销链接 |
