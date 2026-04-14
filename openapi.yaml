@@ -409,6 +409,9 @@ components:
           description: 交易总金额
         currency:
           type: string
+        buyerUserId:
+          type: string
+          description: 买家用户 ID
         buyerNickname:
           type: string
         buyerAddress:

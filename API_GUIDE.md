@@ -1238,6 +1238,7 @@ X-API-Key: videa_xxx
       "amount": 13.993,
       "totalAmount": 19.99,
       "currency": "USDT",
+      "buyerUserId": "clx...",
       "buyerNickname": "Fan123",
       "buyerAddress": "0x...",
       "contentTitle": "External Content",
