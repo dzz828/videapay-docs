@@ -1080,6 +1080,71 @@ paths:
         "404":
           description: 链上未找到交易回执
 
+  /v1/external/deposit/replacement:
+    post:
+      tags: [充值]
+      summary: 钱包替换交易通知
+      description: |
+        当用户在钱包中使用 Speed Up 或 Cancel 时，钱包会以相同 nonce 重新广播
+        交易并产生新的交易哈希。原 `/deposit/notify` 创建的充值记录仍指向已失效的
+        原始哈希，DepositProcessor 的 `getTransactionReceipt(originalHash)` 永远
+        无法解析，记录会停滞直到 15 分钟 DEPOSIT_STALLED 告警。
+
+        弹窗通过 viem 的 `waitForTransactionReceipt` → `onReplaced` 回调调用此接口，
+        将 PENDING 充值记录的交易哈希切换为替换后的新哈希，或在用户取消时将记录
+        标记为 FAILED。
+
+        由弹窗内部调用。
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [originalTransactionHash, replacementTransactionHash, chainId, reason]
+              properties:
+                originalTransactionHash:
+                  type: string
+                  pattern: "^0x[a-fA-F0-9]{64}$"
+                  description: /deposit/notify 创建充值记录时使用的原始哈希
+                replacementTransactionHash:
+                  type: string
+                  pattern: "^0x[a-fA-F0-9]{64}$"
+                  description: 钱包广播的新交易哈希（reason=cancelled 时忽略）
+                chainId:
+                  $ref: "#/components/schemas/ChainId"
+                reason:
+                  type: string
+                  enum: [replaced, repriced, cancelled]
+                  description: 与 viem `ReplacementReason` 对齐
+      responses:
+        "200":
+          description: 充值哈希已更新或记录已取消
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [depositId, status]
+                properties:
+                  depositId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [PENDING, FAILED]
+                  idempotent:
+                    type: boolean
+                    enum: [true]
+                    description: 替换哈希与当前记录一致时返回
+        "400":
+          description: chainId 与充值记录不符
+        "404":
+          description: 未找到充值记录（包含归属其他用户的情况，用于避免泄漏）
+        "409":
+          description: 充值不再是 PENDING 状态，已被处理
+
   # --- 订阅/打赏便捷别名 ---
   /v1/external/subscribe:
     post:
